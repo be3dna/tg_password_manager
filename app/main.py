@@ -4,7 +4,11 @@ from bot.handlers import add_password, button, list_passwords, start
 
 
 def main() -> None:
-    application = ApplicationBuilder().token("Your token here").build()
+    application = (
+        ApplicationBuilder()
+        .token("YOUR_TOKEN_HERE")
+        .build()
+    )
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("add", add_password))
