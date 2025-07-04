@@ -1,15 +1,31 @@
 import logging
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, CopyTextButton
+import string
+
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, CopyTextButton, ReplyKeyboardMarkup, \
+    KeyboardButton
 from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes, ConversationHandler, MessageHandler, filters
 
 from app.config import SERVICES_PER_PAGE
 from app.db.password import PasswordDB
 from app.utils import generate_password
 
+from app.db.repository import Account, Repository, InMemoryRepository, User
+from app.security.password_generator import generate
+from app.security.security_utils import encrypt, decrypt, get_hash
+
 # Включаем логирование
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
+# Словарь для хранения паролей
+services_per_page = 5
+repository: Repository = InMemoryRepository()
+_MAIN_MENU_MARKUP = ReplyKeyboardMarkup.from_row([
+    KeyboardButton("📋 список аккаунтов"),
+    KeyboardButton("📥 добавить аккаунт"),
+    KeyboardButton("⚙ новый пароль"),
+    KeyboardButton("👋 Выйти")
+], resize_keyboard=True)
 
 CMD_STATE, SERVICE_STATE, PASSWORD_STATE, CHOOSE_STATE, CHOOSE_DELETING_STATE, CONFIRM_DELETE_STATE = range(6)
 
@@ -27,12 +43,12 @@ async def new_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 async def add_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     service_name = update.message.text
     user_id = update.effective_user.id
-    
+
     password = await PasswordDB.get_password(user_id=user_id, service=service_name)
     if password is not None:
         await update.message.reply_text(f'Пароль для сервиса {service_name} уже добавлен')
         return CMD_STATE
-    
+
     context.user_data['service'] = service_name
     generate_password_kb = InlineKeyboardMarkup(
         [[InlineKeyboardButton(text='Сгенерировать', callback_data='generate_password')]]
@@ -62,7 +78,7 @@ async def add_generated_password(update: Update, context: ContextTypes.DEFAULT_T
 
 async def list_services(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | None:
     user_id = update.effective_user.id
-    
+
     if update.callback_query is None:
         context.user_data['page'] = 0
         services = await PasswordDB.get_user_services(user_id=user_id)
@@ -75,7 +91,7 @@ async def list_services(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             context.user_data['page'] -= 1
 
     page = context.user_data['page']
-    
+
     if not services:
         await update.message.reply_text('Нет сохраненных паролей.')
         return CMD_STATE
@@ -101,9 +117,17 @@ async def list_services(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         await update.callback_query.answer()
         message = update.callback_query.message
     await message.reply_text('Выберите сервис:', reply_markup=reply_markup)
-    
+
     return CHOOSE_STATE
 
+
+async def generate_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    alphabet = string.ascii_letters + string.digits + string.punctuation
+
+    password = generate(16, alphabet)
+
+    copy_kb = InlineKeyboardMarkup([[InlineKeyboardButton('Копировать password', copy_text=CopyTextButton(password))]])
+    await update.message.reply_text('Пароль сгенерирован!', reply_markup=copy_kb)
 
 async def send_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     del(context.user_data['page'])
@@ -156,7 +180,7 @@ async def delete_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.callback_query.answer()
         message = update.callback_query.message
     await message.reply_text('Выберите сервис:', reply_markup=reply_markup)
-    
+
     return CHOOSE_DELETING_STATE
 
 
@@ -218,3 +242,20 @@ conversation_handler = ConversationHandler(
     fallbacks=[]
 
 )
+
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    commands = {
+        "📋 список аккаунтов": list_services,
+        "📥 добавить аккаунт": add_password,
+        "↪ назад": None,
+        "🏠 на главную": start,
+        "⚙ новый пароль": generate_password,
+        "👋 Выйти": None
+    }
+
+    command = commands.get(update.message.text)
+    if command:
+        await command(update, context)
+    else:
+        await context.message.reply_text("Неизвестная команда")
