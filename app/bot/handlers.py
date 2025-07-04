@@ -83,26 +83,11 @@ async def add_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     await update.message.reply_text(f'Пароль для сервиса {service} был успешно сохранен')
     return CMD_STATE
 
-
 async def add_generated_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
     service = context.user_data['service']
     login = context.user_data['login']
     password = update.message.text
-    password, salt = encrypt(password.encode(), context.user_data['secret'].encode())
-    account = Account(user_id, service, login, password, salt)
-    await AccountDB.save_account(account)
-    await update.callback_query.answer()
-    await update.callback_query.message.reply_text(f'Пароль для сервиса {service} был успешно сгенерирован')
-    return CMD_STATE
-
-
-async def add_generated_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await auth_check(update, context)
-    user_id = update.effective_user.id
-    service = context.user_data['service']
-    login = context.user_data['login']
-    password = generate(16)
     password, salt = encrypt(password.encode(), context.user_data['secret'].encode())
     account = Account(user_id, service, login, password, salt)
     await AccountDB.save_account(account)
@@ -158,12 +143,10 @@ async def list_services(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 
 
 async def set_generator_password_size(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-
     return GENERATE_PASSWORD_ALPHABET
 
 
 async def set_generator_password_alphabet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-
     return ConversationHandler.END
 
 async def generate_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -193,7 +176,6 @@ async def send_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await update.callback_query.answer()
     await update.callback_query.message.reply_text(f'Ваш пароль от сервиса {service}.', reply_markup=copy_kb)
     return CMD_STATE
-
 
 async def delete_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
@@ -238,35 +220,6 @@ async def delete_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     return CHOOSE_DELETING_STATE
 
-
-async def delete_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | None:
-    service = update.callback_query.data.split('_', 2)[2]
-    context.user_data['service_to_delete'] = service
-    delete_kb = InlineKeyboardMarkup(
-        [
-            [InlineKeyboardButton('Удалить', callback_data='confirm_delete')],
-            [InlineKeyboardButton('Отменить', callback_data='cancel_delete')]
-        ]
-    )
-    await update.callback_query.answer()
-    await update.callback_query.message.reply_text(f'Удалить запись для сервиса {service}?', reply_markup=delete_kb)
-    return CONFIRM_DELETE_STATE
-
-
-async def confirm_delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    user_id = update.effective_user.id
-    service = context.user_data['service_to_delete']
-    await AccountDB.delete_account(user_id=user_id, service=service)
-    await update.callback_query.answer()
-    await update.callback_query.message.reply_text(f'Парооль для сервиса {service} был удален')
-    return CMD_STATE
-
-
-async def cancel_delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.callback_query.answer()
-    await update.callback_query.message.reply_text(f'Удаление было отменено')
-    return CMD_STATE
-
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     commands = {
         ACCOUNT_LIST_BUTTON_MESSAGE: list_services,
@@ -297,10 +250,36 @@ async def logout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def auth_check(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     while context.user_data.get('secret') is None:
         await login(update, context)
-
     # todo pass verification
 
 
+async def delete_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | None:
+    service = update.callback_query.data.split('_', 2)[2]
+    context.user_data['service_to_delete'] = service
+    delete_kb = InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton('Удалить', callback_data='confirm_delete')],
+            [InlineKeyboardButton('Отменить', callback_data='cancel_delete')]
+        ]
+    )
+    await update.callback_query.answer()
+    await update.callback_query.message.reply_text(f'Удалить запись для сервиса {service}?', reply_markup=delete_kb)
+    return CONFIRM_DELETE_STATE
+
+
+async def confirm_delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user_id = update.effective_user.id
+    service = context.user_data['service_to_delete']
+    await AccountDB.delete_account(user_id=user_id, service=service)
+    await update.callback_query.answer()
+    await update.callback_query.message.reply_text(f'Пароль для сервиса {service} был удален')
+    return CMD_STATE
+
+
+async def cancel_delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.callback_query.answer()
+    await update.callback_query.message.reply_text('Удаление было отменено')
+    return CMD_STATE
 
 conversation_handler = ConversationHandler(
     entry_points=[CommandHandler('start', start)],
@@ -341,3 +320,5 @@ generate_password_handler = ConversationHandler(
     },
     fallbacks=[]
 )
+
+
