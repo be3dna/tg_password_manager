@@ -3,7 +3,10 @@ import string
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, CopyTextButton, ReplyKeyboardMarkup, \
     KeyboardButton
-from telegram.ext import ContextTypes
+from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes, ConversationHandler, MessageHandler, filters
+
+from app.config import SERVICES_PER_PAGE
+from app.db.password import PasswordDB
 
 from app.db.repository import Account, Repository, InMemoryRepository, User
 from app.security.password_generator import generate
@@ -13,7 +16,9 @@ from app.security.security_utils import encrypt, decrypt, get_hash
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 # Словарь для хранения паролей
-services_per_page = 5
+passwords = {'github': '1234', 'b': '1234', 'c': '1234', 'd': '1234', 'e': '1234', 'f': '1234'}
+SERVICE_STATE, PASSWORD_STATE, CHOOSE_STATE = range(3)
+
 repository: Repository = InMemoryRepository()
 _MAIN_MENU_MARKUP = ReplyKeyboardMarkup.from_row([
     KeyboardButton("📋 список аккаунтов"),
@@ -22,7 +27,6 @@ _MAIN_MENU_MARKUP = ReplyKeyboardMarkup.from_row([
     KeyboardButton("👋 Выйти")
 ], resize_keyboard=True)
 
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(f'Привет! Используй /add для добавления пароля и /list для просмотра. {update.effective_user.id}')
     context.user_data["secret"] = "pass"
@@ -30,60 +34,77 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f'Привет! Используй /add для добавления пароля и /list для просмотра. {update.effective_user.id}',
         reply_markup=_MAIN_MENU_MARKUP)
 
-async def add_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+
+async def new_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     reply_markup = ReplyKeyboardMarkup.from_row([
         KeyboardButton("🏠 на главную")
     ], resize_keyboard=True, one_time_keyboard=True)
 
-    if (context.args is None) or (len(context.args) < 2):
-        await update.message.reply_text('Используйте: /add <сервис> <login> <пароль>', reply_markup=reply_markup)
-        return
+    await update.message.reply_text(f'Введи название сервиса', reply_markup=reply_markup)
+    return SERVICE_STATE
 
+async def add_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    service_name = update.message.text
+    context.user_data['service'] = service_name
+    await update.message.reply_text(f'Введи пароль для сервиса {service_name}')
+    return PASSWORD_STATE
+
+async def add_login(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    #todo
+    pass
+
+async def add_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    service = context.user_data['service']
+    password = update.message.text #todo encrypt
     user_id = update.effective_user.id
-    service = context.args[0]
-    login = context.args[1]
-    password = context.args[2]
+    await PasswordDB.add_password(service=service, password=password, user_id=user_id)
+    await update.message.reply_text(f'Пароль для сервиса {service} был успешно сохранен')
+    return ConversationHandler.END
 
-    password, password_salt = encrypt(password.encode(), context.user_data["secret"].encode())
+async def list_services(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    page = context.user_data.get('page')
+    user_id = update.effective_user.id
 
-    await repository.save_account(Account(user_id, service, login, password, password_salt))
-    await update.message.reply_text(f'Пароль для {service} добавлен!', reply_markup=_MAIN_MENU_MARKUP)
+    if page is None:
+        context.user_data['page'] = 0
+        services = await PasswordDB.get_user_services(user_id=user_id)
+        context.user_data['services'] = services[::]
+    else:
+        services = context.user_data['services']
+        if update.callback_query.data == 'next_page':
+            context.user_data['page'] += 1
+        else:
+            context.user_data['page'] -= 1
 
-async def list_passwords(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    services = await repository.get_accounts(update.effective_user.id)
+    page = context.user_data['page']
+
     if not services:
         await update.message.reply_text('Нет сохраненных паролей.')
-        return
+        return ConversationHandler.END
 
     # Пагинация
-    page = int(context.args[0]) if context.args and context.args[0].isdigit() else 0
-    start = page * services_per_page
-    end = start + services_per_page
+    start = page * SERVICES_PER_PAGE
+    end = start + SERVICES_PER_PAGE
     keyboard = []
 
     for service in services[start:end]:
-        keyboard.append([InlineKeyboardButton(service, callback_data=service)])
+        keyboard.append([InlineKeyboardButton(service, callback_data=f'service_{service}')])
 
     # Добавляем кнопки навигации
     if start > 0:
-        keyboard.append([InlineKeyboardButton('Назад', callback_data=f'page_{page - 1}')])
+        keyboard.append([InlineKeyboardButton('Назад', callback_data='previous_page')])
     if end < len(services):
-        keyboard.append([InlineKeyboardButton('Вперед', callback_data=f'page_{page + 1}')])
+        keyboard.append([InlineKeyboardButton('Вперед', callback_data='next_page')])
 
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text('Выберите сервис:', reply_markup=reply_markup)
-
-async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    await query.answer()
-
-    if query.data.startswith('page_'):
-        page = int(query.data.split('_')[1])
-        await list_passwords(query, context)
-
+    if update.message is not None:
+        message = update.message
     else:
-        service = query.data
-        await send_password(query, service, context)
+        await update.callback_query.answer()
+        message = update.callback_query.message
+    await message.reply_text('Выберите сервис:', reply_markup=reply_markup)
+
+    return CHOOSE_STATE
 
 
 async def generate_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -95,6 +116,16 @@ async def generate_password(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await update.message.reply_text('Пароль сгенерирован!', reply_markup=copy_kb)
 
 
+async def send_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    service = update.callback_query.data.split('_', 1)[1]
+    password = await PasswordDB.get_password(user_id=user_id, service=service)
+    copy_kb = InlineKeyboardMarkup([[InlineKeyboardButton('Копировать', copy_text=CopyTextButton(password))]])
+    await update.callback_query.answer()
+    await update.callback_query.message.reply_text(f'Ваш пароль от сервиса {service}.', reply_markup=copy_kb)
+    return ConversationHandler.END
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     commands = {
         "📋 список аккаунтов": list_passwords,
@@ -102,7 +133,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         "↪ назад": None,
         "🏠 на главную": start,
         "⚙ новый пароль": generate_password,
-        "👋 Выйти": logout
+        "👋 Выйти": None
     }
 
     command = commands.get(update.message.text)
@@ -112,11 +143,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await context.message.reply_text("Неизвестная команда")
 
 
-async def send_password(update: Update, service: str, context: ContextTypes.DEFAULT_TYPE) -> None:
-    account = await repository.get_account(update.from_user.id, service)
-    login = account.get_login()
-    password = decrypt(account.get_password(), context.user_data["secret"].encode(), account.get_password_salt())
-    copy_kb = InlineKeyboardMarkup([[InlineKeyboardButton('Копировать login', copy_text=CopyTextButton(login))],
-                                    [InlineKeyboardButton('Копировать password',
-                                                          copy_text=CopyTextButton(password.decode()))]])
-    await update.message.reply_text(f'Ваш пароль от сервиса {service}.', reply_markup=copy_kb)
+
+new_password_handler = ConversationHandler(
+    entry_points=[CommandHandler('add', new_password)],
+    states={
+        SERVICE_STATE: [MessageHandler(filters.TEXT, add_service)],
+        PASSWORD_STATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_password)]
+    },
+    fallbacks=[]
+)
+
+get_password_handler = ConversationHandler(
+    entry_points=[CommandHandler('list', list_services)],
+    states={
+        CHOOSE_STATE: [
+            CallbackQueryHandler(pattern='^previous_page$|^next_page$',callback=list_services),
+            CallbackQueryHandler(pattern='^service_.+$', callback=send_password)
+        ],
+    },
+    fallbacks=[]
+)
