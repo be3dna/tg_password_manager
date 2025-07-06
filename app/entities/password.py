@@ -1,4 +1,4 @@
-from sqlalchemy import BigInteger, Integer, Text
+from sqlalchemy import BigInteger, Integer, Text, UniqueConstraint
 from sqlalchemy.orm import mapped_column, Mapped
 
 from app.entities.base import Base
@@ -12,4 +12,4 @@ class Password(Base):
     service: Mapped[str] = mapped_column(Text)
     password: Mapped[str] = mapped_column(Text)
 
-
+    __table_args__ = (UniqueConstraint('service', 'user_id', name='uix_title_user'),)

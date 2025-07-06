@@ -25,6 +25,11 @@ async def new_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 async def add_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     service_name = update.message.text
+    user_id = update.effective_user.id
+    password = await PasswordDB.get_password(user_id=user_id, service=service_name)
+    if password is not None:
+        await update.message.reply_text(f'Пароль для сервиса {service_name} уже добавлен')
+        return ConversationHandler.END
     context.user_data['service'] = service_name
     generate_password_kb = InlineKeyboardMarkup(
         [[InlineKeyboardButton(text='Сгенерировать', callback_data='generate_password')]]
