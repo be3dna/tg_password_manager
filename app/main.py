@@ -1,12 +1,17 @@
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters
+import os
 
+from dotenv import load_dotenv
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
+
+from app.config import TELEGRAM_TOKEN
 from bot.handlers import get_password_handler, start, new_password_handler, handle_message
 
 
 def main() -> None:
+
     application = (
         ApplicationBuilder()
-        .token("YOUR_TOKEN_HERE")
+        .token(TELEGRAM_TOKEN)
         .build()
     )
 
