@@ -11,8 +11,6 @@ async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False
 def sessioned(f):
     async def wrapper(*args, **kwargs):
         async with async_session() as session:
-            async with session.begin():
-                res = await f(session, *args, **kwargs)
-            await session.commit()
+            res = await f(session, *args, **kwargs)
         return res
     return wrapper
