@@ -1,14 +1,35 @@
-class User:
-    def __init__(self, user_id, password_hash, password_hash_salt):
-        self._user_id = user_id
-        self._password_hash = password_hash
-        self._password_hash_salt = password_hash_salt
+from sqlalchemy import insert, select
 
-    def get_user_id(self):
-        return self._user_id
+from app.db.db import sessioned
+from app.dto.user import User as UserDto
+from app.entities.user import User as UserEntity
 
-    def get_password_hash(self):
-        return self._password_hash
 
-    def get_password_hash_salt(self):
-        return self._password_hash_salt
+class UserDB:
+
+    @staticmethod
+    @sessioned
+    async def add_user(session, user: UserDto) -> None:
+        session.execute(
+            insert(UserEntity)
+            .values(
+                id=user.get_user_id(),
+                password_hash=user.get_password_hash(),
+                password_hash_salt=user.get_password_hash_salt()
+            )
+        )
+        await session.commit()
+
+    @staticmethod
+    @sessioned
+    async def get_user(session, user_id) -> UserDto | None:
+        res = await session.execute(
+            select(UserEntity)
+            .select_from(UserEntity)
+            .where(UserEntity.user_id == user_id)
+        )
+        user_entity = res.scalars().first()
+        if user_entity is None:
+            return None
+
+        return UserDto.from_orm(user_entity)
