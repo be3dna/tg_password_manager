@@ -27,8 +27,9 @@ EXIT_BUTTON_MESSAGE = "👋 Выйти"
 
 # Словарь для хранения паролей
 (CMD_STATE, SERVICE_STATE, LOGIN_STATE,
- PASSWORD_STATE, CHOOSE_STATE, GENERATE_PASSWORD_SIZE,
- GENERATE_PASSWORD_ALPHABET, CHOOSE_DELETING_STATE, CONFIRM_DELETE_STATE) = range(9)
+ PASSWORD_STATE, CHOOSE_STATE, CHOOSE_DELETING_STATE,
+ CONFIRM_DELETE_STATE, GENERATE_PASSWORD_SIZE, GENERATE_PASSWORD_ALPHABET,
+ GENERATE_PASSWORD) = range(10)
 
 _MAIN_MENU_MARKUP = ReplyKeyboardMarkup.from_row([
     KeyboardButton(ACCOUNT_LIST_BUTTON_MESSAGE),
@@ -96,7 +97,6 @@ async def add_generated_password(update: Update, context: ContextTypes.DEFAULT_T
     user_id = update.effective_user.id
     service = context.user_data['service']
     login = context.user_data['login']
-    login = context.user_data['login']
     password = generate(DEFAULT_GENERATION_SIZE, DEFAULT_GENERATION_ALPHABET)
     encrypted_password, salt = encrypt(password.encode(), context.user_data['secret'].encode())
     account = Account(user_id, service, login, encrypted_password, salt)
@@ -163,7 +163,7 @@ async def set_generator_password_size(update: Update, context: ContextTypes.DEFA
 
 
 async def set_generator_password_alphabet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    return ConversationHandler.END
+    return GENERATE_PASSWORD
 
 async def generate_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     alphabet = context.user_data.get("generator_password_alphabet")
@@ -262,11 +262,9 @@ async def logout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     context.user_data['secret'] = None
     await update.message.reply_text("Logout success!")
 
-
 async def auth_check(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     while context.user_data.get('secret') is None:
         await login(update, context)
-
     # todo pass verification
 
 
@@ -326,7 +324,6 @@ conversation_handler = ConversationHandler(
         ]
     },
     fallbacks=[]
-
 )
 
 generate_password_handler = ConversationHandler(
