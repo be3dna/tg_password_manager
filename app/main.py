@@ -1,6 +1,6 @@
-from telegram.ext import ApplicationBuilder, CommandHandler
+from telegram.ext import ApplicationBuilder
 
-from bot.handlers import get_password_handler, start, new_password_handler
+from bot.handlers import conversation_handler
 
 def main() -> None:
     application = (
@@ -8,10 +8,8 @@ def main() -> None:
         .token("ТОКЕН ХИАР")
         .build()
     )
+    application.add_handler(conversation_handler)
 
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(new_password_handler)
-    application.add_handler(get_password_handler)
 
     application.run_polling()
 

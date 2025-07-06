@@ -1,6 +1,5 @@
-from sqlalchemy import insert, select
+from sqlalchemy import delete, insert, select
 
-from app.config import SERVICES_PER_PAGE
 from app.db.db import sessioned
 from app.entities.password import Password
 
@@ -43,3 +42,12 @@ class PasswordDB:
         )
         password = res.scalars().first()
         return password
+    
+    @staticmethod
+    @sessioned
+    async def delete_password(session, user_id, service):
+        await session.execute(
+            delete(Password)
+            .where(Password.user_id == user_id, Password.service == service)
+        )
+        await session.commit()
