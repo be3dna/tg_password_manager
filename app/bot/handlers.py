@@ -12,6 +12,9 @@ from app.dto.account import Account
 from app.security.password_generator import generate
 from app.security.security_utils import encrypt, decrypt
 
+DEFAULT_GENERATION_SIZE = 16
+DEFAULT_GENERATION_ALPHABET = string.ascii_letters + string.digits + string.punctuation
+
 # Включаем логирование
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
@@ -60,6 +63,7 @@ async def add_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         return CMD_STATE
 
     context.user_data['service'] = service_name
+
     generate_password_kb = InlineKeyboardMarkup(
         [[InlineKeyboardButton(text='Сгенерировать', callback_data='generate_password')]]
     )
@@ -69,7 +73,11 @@ async def add_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 async def add_login(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     service_login = update.message.text
     context.user_data['login'] = service_login
-    await update.message.reply_text(f'Введи пароль для сервиса {context.user_data["service"]}')
+    generate_password_kb = InlineKeyboardMarkup(
+        [[InlineKeyboardButton(text='Сгенерировать', callback_data='generate_password')]]
+    )
+    await update.message.reply_text(f'Введи пароль для сервиса {context.user_data["service"]}',
+                                    reply_markup=generate_password_kb)
     return PASSWORD_STATE
 
 async def add_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -79,6 +87,7 @@ async def add_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     password = update.message.text
     password, salt = encrypt(password.encode(), context.user_data['secret'].encode())
     account = Account(user_id, service, login, password, salt)
+
     await AccountDB.save_account(account)
     await update.message.reply_text(f'Пароль для сервиса {service} был успешно сохранен')
     return CMD_STATE
@@ -87,12 +96,19 @@ async def add_generated_password(update: Update, context: ContextTypes.DEFAULT_T
     user_id = update.effective_user.id
     service = context.user_data['service']
     login = context.user_data['login']
-    password = generate(16)
-    password, salt = encrypt(password.encode(), context.user_data['secret'].encode())
-    account = Account(user_id, service, login, password, salt)
+    login = context.user_data['login']
+    password = generate(DEFAULT_GENERATION_SIZE, DEFAULT_GENERATION_ALPHABET)
+    encrypted_password, salt = encrypt(password.encode(), context.user_data['secret'].encode())
+    account = Account(user_id, service, login, encrypted_password, salt)
+
+    copy_password_kb = InlineKeyboardMarkup(
+        [[InlineKeyboardButton(text='Скопировать', copy_text=password)]]
+    )
+
     await AccountDB.save_account(account)
     await update.callback_query.answer()
-    await update.callback_query.message.reply_text(f'Пароль для сервиса {service} был успешно сгенерирован')
+    await update.callback_query.message.reply_text(f'Пароль для сервиса {service} был успешно сгенерирован',
+                                                   reply_markup=copy_password_kb)
     return CMD_STATE
 
 
@@ -321,5 +337,3 @@ generate_password_handler = ConversationHandler(
     },
     fallbacks=[]
 )
-
-
