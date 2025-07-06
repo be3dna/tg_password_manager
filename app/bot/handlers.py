@@ -5,12 +5,11 @@ from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes, Con
 
 from app.config import SERVICES_PER_PAGE
 from app.db.password import PasswordDB
+from app.utils import generate_password
 
 # Включаем логирование
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-# Словарь для хранения паролей
-passwords = {'github': '1234', 'b': '1234', 'c': '1234', 'd': '1234', 'e': '1234', 'f': '1234'}
 
 SERVICE_STATE, PASSWORD_STATE, CHOOSE_STATE = range(3)
 
@@ -27,7 +26,10 @@ async def new_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 async def add_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     service_name = update.message.text
     context.user_data['service'] = service_name
-    await update.message.reply_text(f'Введи пароль для сервиса {service_name}')
+    generate_password_kb = InlineKeyboardMarkup(
+        [[InlineKeyboardButton(text='Сгенерировать', callback_data='generate_password')]]
+    )
+    await update.message.reply_text(f'Введи пароль для сервиса {service_name}', reply_markup=generate_password_kb)
     return PASSWORD_STATE
 
 
@@ -37,6 +39,16 @@ async def add_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     user_id = update.effective_user.id
     await PasswordDB.add_password(service=service, password=password, user_id=user_id)
     await update.message.reply_text(f'Пароль для сервиса {service} был успешно сохранен')
+    return ConversationHandler.END
+
+
+async def add_generated_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    service = context.user_data['service']
+    user_id = update.effective_user.id
+    password = generate_password()
+    await PasswordDB.add_password(service=service, password=password, user_id=user_id)
+    await update.callback_query.answer()
+    await update.callback_query.message.reply_text(f'Пароль для сервиса {service} был успешно сгенерирован')
     return ConversationHandler.END
 
 
@@ -100,7 +112,10 @@ new_password_handler = ConversationHandler(
     entry_points=[CommandHandler('add', new_password)],
     states={
         SERVICE_STATE: [MessageHandler(filters.TEXT, add_service)],
-        PASSWORD_STATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_password)]
+        PASSWORD_STATE: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, add_password),
+            CallbackQueryHandler(pattern='^generate_password$', callback=add_generated_password)
+        ]
     },
     fallbacks=[]
 )
