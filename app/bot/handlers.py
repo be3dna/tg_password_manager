@@ -37,7 +37,7 @@ _MAIN_MENU_MARKUP = ReplyKeyboardMarkup.from_row([
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await auth_check(update, context)
     await update.message.reply_text(
-        f'Привет! Используй /add для добавления пароля и /list для просмотра. {update.effective_user.id}',
+        'Привет! Используй /add для добавления пароля, /list для просмотра, а /del - для удаления!',
         reply_markup=_MAIN_MENU_MARKUP)
     return CMD_STATE
 
@@ -87,7 +87,7 @@ async def add_generated_password(update: Update, context: ContextTypes.DEFAULT_T
     user_id = update.effective_user.id
     service = context.user_data['service']
     login = context.user_data['login']
-    password = update.message.text
+    password = generate(16)
     password, salt = encrypt(password.encode(), context.user_data['secret'].encode())
     account = Account(user_id, service, login, password, salt)
     await AccountDB.save_account(account)
@@ -162,8 +162,8 @@ async def generate_password(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     copy_kb = InlineKeyboardMarkup([[InlineKeyboardButton('Копировать password', copy_text=CopyTextButton(password))]])
     await update.message.reply_text('Пароль сгенерирован!', reply_markup=copy_kb)
 
-async def send_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    del(context.user_data['page'])
+async def send_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    del (context.user_data['page'])
     user_id = update.effective_user.id
     service = update.callback_query.data.split('_', 1)[1]
     account = await AccountDB.get_account(user_id=user_id, service=service)
@@ -250,6 +250,7 @@ async def logout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def auth_check(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     while context.user_data.get('secret') is None:
         await login(update, context)
+
     # todo pass verification
 
 
@@ -296,11 +297,11 @@ conversation_handler = ConversationHandler(
             CallbackQueryHandler(pattern='^generate_password$', callback=add_generated_password)
         ],
         CHOOSE_STATE: [
-            CallbackQueryHandler(pattern='^previous_page$|^next_page$',callback=list_services),
+            CallbackQueryHandler(pattern='^previous_page$|^next_page$', callback=list_services),
             CallbackQueryHandler(pattern='^service_.+$', callback=send_password)
         ],
         CHOOSE_DELETING_STATE: [
-            CallbackQueryHandler(pattern='^previous_page$|^next_page$',callback=delete_service),
+            CallbackQueryHandler(pattern='^previous_page$|^next_page$', callback=delete_service),
             CallbackQueryHandler(pattern='^del_service_.+$', callback=delete_password)
         ],
         CONFIRM_DELETE_STATE: [
