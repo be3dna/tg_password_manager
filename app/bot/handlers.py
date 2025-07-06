@@ -23,10 +23,9 @@ NEW_PASSWORD_BUTTON_MESSAGE = "⚙ новый пароль"
 EXIT_BUTTON_MESSAGE = "👋 Выйти"
 
 # Словарь для хранения паролей
-
-(CMD_STATE, CHOOSE_DELETING_STATE, CONFIRM_DELETE_STATE,
- SERVICE_STATE, LOGIN_STATE, PASSWORD_STATE,
- CHOOSE_STATE, GENERATE_PASSWORD_SIZE, GENERATE_PASSWORD_ALPHABET)= range(9)
+(CMD_STATE, SERVICE_STATE, LOGIN_STATE,
+ PASSWORD_STATE, CHOOSE_STATE, GENERATE_PASSWORD_SIZE,
+ GENERATE_PASSWORD_ALPHABET, CHOOSE_DELETING_STATE, CONFIRM_DELETE_STATE) = range(9)
 
 _MAIN_MENU_MARKUP = ReplyKeyboardMarkup.from_row([
     KeyboardButton(ACCOUNT_LIST_BUTTON_MESSAGE),
@@ -42,8 +41,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         reply_markup=_MAIN_MENU_MARKUP)
     return CMD_STATE
 
-
-async def new_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def new_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await auth_check(update, context)
     reply_markup = ReplyKeyboardMarkup.from_row([
         KeyboardButton(HOME_BUTTON_MESSAGE)
@@ -96,7 +94,7 @@ async def add_generated_password(update: Update, context: ContextTypes.DEFAULT_T
     await AccountDB.save_account(account)
     await update.callback_query.answer()
     await update.callback_query.message.reply_text(f'Пароль для сервиса {service} был успешно сгенерирован')
-    return ConversationHandler.END
+    return CMD_STATE
 
 
 async def add_generated_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -114,6 +112,7 @@ async def add_generated_password(update: Update, context: ContextTypes.DEFAULT_T
 
 
 async def list_services(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | None:
+    await auth_check(update, context)
     user_id = update.effective_user.id
 
     if update.callback_query is None:
@@ -268,37 +267,6 @@ async def cancel_delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     await update.callback_query.message.reply_text(f'Удаление было отменено')
     return CMD_STATE
 
-
-conversation_handler = ConversationHandler(
-    entry_points=[CommandHandler('start', start)],
-    states={
-        CMD_STATE: [
-            CommandHandler('add', new_password),
-            CommandHandler('list', list_services),
-            CommandHandler('del', delete_service)
-        ],
-        SERVICE_STATE: [MessageHandler(filters.TEXT, add_service)],
-        PASSWORD_STATE: [
-            MessageHandler(filters.TEXT & ~filters.COMMAND, add_password),
-            CallbackQueryHandler(pattern='^generate_password$', callback=add_generated_password)
-        ],
-        CHOOSE_STATE: [
-            CallbackQueryHandler(pattern='^previous_page$|^next_page$',callback=list_services),
-            CallbackQueryHandler(pattern='^service_.+$', callback=send_password)
-        ],
-        CHOOSE_DELETING_STATE: [
-            CallbackQueryHandler(pattern='^previous_page$|^next_page$',callback=delete_service),
-            CallbackQueryHandler(pattern='^del_service_.+$', callback=delete_password)
-        ],
-        CONFIRM_DELETE_STATE: [
-            CallbackQueryHandler(pattern='^confirm_delete$', callback=confirm_delete),
-            CallbackQueryHandler(pattern='^cancel_delete$', callback=cancel_delete)
-        ]
-    },
-    fallbacks=[]
-
-)
-
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     commands = {
         ACCOUNT_LIST_BUTTON_MESSAGE: list_services,
@@ -333,28 +301,36 @@ async def auth_check(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     # todo pass verification
 
 
-new_password_handler = ConversationHandler(
-    entry_points=[CommandHandler('add', new_password)],
+
+conversation_handler = ConversationHandler(
+    entry_points=[CommandHandler('start', start)],
     states={
+        CMD_STATE: [
+            CommandHandler('add', new_password),
+            CommandHandler('list', list_services),
+            CommandHandler('del', delete_service)
+        ],
         SERVICE_STATE: [MessageHandler(filters.TEXT, add_service)],
         LOGIN_STATE: [MessageHandler(filters.TEXT, add_login)],
         PASSWORD_STATE: [
             MessageHandler(filters.TEXT & ~filters.COMMAND, add_password),
             CallbackQueryHandler(pattern='^generate_password$', callback=add_generated_password)
-        ]
-    },
-    fallbacks=[]
-)
-
-get_password_handler = ConversationHandler(
-    entry_points=[CommandHandler('list', list_services)],
-    states={
+        ],
         CHOOSE_STATE: [
             CallbackQueryHandler(pattern='^previous_page$|^next_page$',callback=list_services),
             CallbackQueryHandler(pattern='^service_.+$', callback=send_password)
         ],
+        CHOOSE_DELETING_STATE: [
+            CallbackQueryHandler(pattern='^previous_page$|^next_page$',callback=delete_service),
+            CallbackQueryHandler(pattern='^del_service_.+$', callback=delete_password)
+        ],
+        CONFIRM_DELETE_STATE: [
+            CallbackQueryHandler(pattern='^confirm_delete$', callback=confirm_delete),
+            CallbackQueryHandler(pattern='^cancel_delete$', callback=cancel_delete)
+        ]
     },
     fallbacks=[]
+
 )
 
 generate_password_handler = ConversationHandler(
