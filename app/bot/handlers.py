@@ -52,13 +52,12 @@ async def new_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_text('Введи название сервиса', reply_markup=reply_markup)
     return SERVICE_STATE
 
-
 async def add_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     service_name = update.message.text
     user_id = update.effective_user.id
 
-    password = await AccountDB.get_account(user_id=user_id, service=service_name)
-    if password is not None:
+    account = await AccountDB.get_account(user_id=user_id, service=service_name)
+    if account is not None:
         await update.message.reply_text(f'Пароль для сервиса {service_name} уже добавлен')
         return CMD_STATE
 
@@ -85,6 +84,19 @@ async def add_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     await AccountDB.save_account(account)
     await update.message.reply_text(f'Пароль для сервиса {service} был успешно сохранен')
     return CMD_STATE
+
+
+async def add_generated_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user_id = update.effective_user.id
+    service = context.user_data['service']
+    login = context.user_data['login']
+    password = update.message.text
+    password, salt = encrypt(password.encode(), context.user_data['secret'].encode())
+    account = Account(user_id, service, login, password, salt)
+    await AccountDB.save_account(account)
+    await update.callback_query.answer()
+    await update.callback_query.message.reply_text(f'Пароль для сервиса {service} был успешно сгенерирован')
+    return ConversationHandler.END
 
 
 async def add_generated_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -326,7 +338,10 @@ new_password_handler = ConversationHandler(
     states={
         SERVICE_STATE: [MessageHandler(filters.TEXT, add_service)],
         LOGIN_STATE: [MessageHandler(filters.TEXT, add_login)],
-        PASSWORD_STATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_password)]
+        PASSWORD_STATE: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, add_password),
+            CallbackQueryHandler(pattern='^generate_password$', callback=add_generated_password)
+        ]
     },
     fallbacks=[]
 )
