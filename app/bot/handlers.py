@@ -134,6 +134,7 @@ async def add_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         [[InlineKeyboardButton(text='Сгенерировать', callback_data='generate_password')]]
     )
     await update.message.reply_text(f'Введи логин для сервиса {service_name}', reply_markup=generate_password_kb)
+    await update.message.reply_text(f'Введи логин для сервиса {service_name}')
     return INPUT_LOGIN_STATE
 
 async def add_login(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
