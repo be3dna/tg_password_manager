@@ -43,7 +43,10 @@ _MAIN_MENU_MARKUP = ReplyKeyboardMarkup.from_row([
     KeyboardButton(GENERATE_BUTTON_MESSAGE),
     KeyboardButton(EXIT_BUTTON_MESSAGE)
 ], resize_keyboard=True)
-
+_GENERATION_BUTTONS_MARKUP = ReplyKeyboardMarkup.from_row([
+    KeyboardButton(BACK_BUTTON_MESSAGE),
+    KeyboardButton(HOME_BUTTON_MESSAGE)
+], resize_keyboard=True)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     logging.info("handled: start")
@@ -74,7 +77,6 @@ async def verify_password(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if not await auth_check(update, context):
         return await start(update, context)
 
-    await update.message.reply_text("Login success!")
     return await main_menu(update, context)
 
 
@@ -178,6 +180,8 @@ async def add_generated_password(update: Update, context: ContextTypes.DEFAULT_T
 async def list_services(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | None:
     if not await auth_check(update, context):
         return UNAUTHED_STATE
+        return await start(update, context)
+
     user_id = update.effective_user.id
 
     if update.callback_query is None:
@@ -195,20 +199,21 @@ async def list_services(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 
     if not services:
         await update.message.reply_text('Нет сохраненных паролей.')
-        return CMD_STATE
+
+        return await main_menu(update, context)
 
     # Пагинация
-    start = page * SERVICES_PER_PAGE
-    end = start + SERVICES_PER_PAGE
+    start_indx = page * SERVICES_PER_PAGE
+    end_indx = start_indx + SERVICES_PER_PAGE
     keyboard = []
 
-    for service in services[start:end]:
+    for service in services[start_indx:end_indx]:
         keyboard.append([InlineKeyboardButton(service, callback_data=f'service_{service}')])
 
     # Добавляем кнопки навигации
-    if start > 0:
+    if start_indx > 0:
         keyboard.append([InlineKeyboardButton('Назад', callback_data='previous_page')])
-    if end < len(services):
+    if end_indx < len(services):
         keyboard.append([InlineKeyboardButton('Вперед', callback_data='next_page')])
 
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -226,18 +231,95 @@ async def list_services(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 
 async def generation_dialog_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("Введите желаемую длину пароля:")
+    return await ask_password_size(update, context)
+
+
+async def ask_password_size(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.message.reply_text("Введите желаемую длину пароля:", reply_markup=_GENERATION_BUTTONS_MARKUP)
     return GENERATE_PASSWORD_SIZE_STATE
 
 async def set_generator_password_size(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     # todo save size
     await update.message.reply_text(
         "выберите символы, участвующие в генерации:")  # todo добавить кнопку подтверждения и кнопки чекбоксов
+    size = int(update.message.text)
+    if not size:
+        return await ask_password_size(update, context)
+
+    context.user_data['generator_password_size'] = size
+
+    return await ask_password_alphabet(update, context)
+
+
+def get_or_default(context: ContextTypes.DEFAULT_TYPE, name: str, default=True):
+    if context.user_data.get(name) is None:
+        context.user_data[name] = default
+        return default
+
+    return context.user_data[name]
+
+
+async def ask_password_alphabet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    alphabet_high = get_or_default(context, 'generator_password_alphabet_high')
+    alphabet_low = get_or_default(context, 'generator_password_alphabet_low')
+    alphabet_numb = get_or_default(context, 'generator_password_alphabet_numb')
+    alphabet_spec = get_or_default(context, 'generator_password_alphabet_spec')
+
+    if update.callback_query is not None:
+        query = update.callback_query.data.split("_")[1]
+        if query == "high":
+            alphabet_high = not alphabet_high
+            context.user_data['generator_password_alphabet_high'] = alphabet_high
+        elif query == "low":
+            alphabet_low = not alphabet_low
+            context.user_data['generator_password_alphabet_low'] = alphabet_low
+        elif query == "numb":
+            alphabet_numb = not alphabet_numb
+            context.user_data['generator_password_alphabet_numb'] = alphabet_numb
+        elif query == "spec":
+            alphabet_spec = not alphabet_spec
+            context.user_data['generator_password_alphabet_spec'] = alphabet_spec
+
+    high_message = ("✅" if alphabet_high else "❌") + " high letters"
+    low_message = ("✅" if alphabet_low else "❌") + " low letters"
+    numb_message = ("✅" if alphabet_numb else "❌") + " numbers letters"
+    spec_message = ("✅" if alphabet_spec else "❌") + " special symbols"
+
+    alphabet_checkboxes_markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton(high_message, callback_data="toggle_high")],
+        [InlineKeyboardButton(low_message, callback_data="toggle_low")],
+        [InlineKeyboardButton(numb_message, callback_data="toggle_numb")],
+        [InlineKeyboardButton(spec_message, callback_data="toggle_spec")],
+        [
+            InlineKeyboardButton("Ввести в ручную", callback_data="manual_mode"),
+            InlineKeyboardButton("Подтвердить", callback_data="alphabet_approve")
+        ]
+    ])
+    if update.message is not None:
+        message = update.message
+    else:
+        await update.callback_query.answer()
+        message = update.callback_query.message
+    await message.reply_text(
+        "Выберите символы, участвующие в генерации:",
+        reply_markup=alphabet_checkboxes_markup)
+
     return GENERATE_PASSWORD_ALPHABET_STATE
 
 async def set_generator_password_alphabet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    # todo save alphabet
-    return await generate_password(update, context)
+    alphabet_high = context.user_data['generator_password_alphabet_high']
+    alphabet_low = context.user_data['generator_password_alphabet_low']
+    alphabet_numb = context.user_data['generator_password_alphabet_numb']
+    alphabet_spec = context.user_data['generator_password_alphabet_spec']
 
+    alphabet = ''
+    if alphabet_high: alphabet += string.ascii_uppercase
+    if alphabet_low: alphabet += string.ascii_lowercase
+    if alphabet_numb: alphabet += string.digits
+    if alphabet_spec: alphabet += string.punctuation
+
+    context.user_data['generator_password_alphabet'] = alphabet
+    return await generate_password(update, context)
 
 async def generate_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     alphabet = context.user_data.get("generator_password_alphabet")
@@ -249,9 +331,18 @@ async def generate_password(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     password = generate(size, alphabet)
 
+    if update.message is not None:
+        message = update.message
+    else:
+        await update.callback_query.answer()
+        message = update.callback_query.message
+
     copy_kb = InlineKeyboardMarkup([[InlineKeyboardButton('Копировать password', copy_text=CopyTextButton(password))]])
     await update.message.reply_text('Пароль сгенерирован!', reply_markup=copy_kb)
     return PASSWORD_VERIFICATION_STATE
+    await message.reply_text('Пароль сгенерирован!', reply_markup=copy_kb)
+
+    return GENERATE_PASSWORD
 
 async def send_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     del (context.user_data['page'])
@@ -287,7 +378,7 @@ async def delete_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     if not services:
         await update.message.reply_text('Нет сохраненных паролей.')
-        return CMD_STATE
+        return await main_menu(update, context)
 
     # Пагинация
     start = page * SERVICES_PER_PAGE
@@ -333,13 +424,13 @@ async def confirm_delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await AccountDB.delete_account(user_id=user_id, service=service)
     await update.callback_query.answer()
     await update.callback_query.message.reply_text(f'Пароль для сервиса {service} был удален')
-    return CMD_STATE
+    return await main_menu(update, context)
 
 
 async def cancel_delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.callback_query.answer()
     await update.callback_query.message.reply_text('Удаление было отменено')
-    return CMD_STATE
+    return await main_menu(update, context)
 
 
 ##
@@ -379,10 +470,10 @@ conversation_handler = ConversationHandler(
             MessageHandler(filters.TEXT & filters.Text([ADD_ACCOUNT_BUTTON_MESSAGE]), new_password),
 
             CommandHandler('list', list_services),
-            MessageHandler(filters.TEXT & filters.Text([ACCOUNT_LIST_BUTTON_MESSAGE]), new_password),
+            MessageHandler(filters.TEXT & filters.Text([ACCOUNT_LIST_BUTTON_MESSAGE]), list_services),
 
             CommandHandler('del', delete_service),
-            MessageHandler(filters.TEXT & filters.Text([DELETE_ACCOUNT_BUTTON_MESSAGE]), new_password),
+            MessageHandler(filters.TEXT & filters.Text([DELETE_ACCOUNT_BUTTON_MESSAGE]), delete_service),
 
             CommandHandler('generate', generate_password),
             MessageHandler(filters.TEXT & filters.Text([GENERATE_BUTTON_MESSAGE]), generate_password),
@@ -413,14 +504,20 @@ conversation_handler = ConversationHandler(
             CallbackQueryHandler(pattern='^cancel_delete$', callback=cancel_delete)
         ],
         GENERATE_PASSWORD_SIZE_STATE: [
-            MessageHandler(filters.TEXT & filters.Regex(r"^\d+$"), set_generator_password_size)
+            MessageHandler(filters.TEXT & filters.Regex(r"^\d+$"), set_generator_password_size),
+            MessageHandler(filters.ALL, ask_password_size)
         ],
         GENERATE_PASSWORD_ALPHABET_STATE: [
             MessageHandler(filters.TEXT, set_generator_password_alphabet)
+            CallbackQueryHandler(pattern='^alphabet_approve$', callback=set_generator_password_alphabet),
+            CallbackQueryHandler(pattern='^toggle_.+$', callback=ask_password_alphabet)
         ],
         GENERATE_PASSWORD: [
+            CommandHandler('home', verify_password),
+            MessageHandler(filters.TEXT & filters.Text([HOME_BUTTON_MESSAGE]), verify_password)
 
         ]
     },
-    fallbacks=[]
+    fallbacks=[],
+    conversation_timeout=5
 )
