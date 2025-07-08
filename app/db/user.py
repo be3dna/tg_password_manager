@@ -10,10 +10,10 @@ class UserDB:
     @staticmethod
     @sessioned
     async def add_user(session, user: UserDto) -> None:
-        session.execute(
+        await session.execute(
             insert(UserEntity)
             .values(
-                id=user.get_user_id(),
+                user_id=user.get_user_id(),
                 password_hash=user.get_password_hash(),
                 password_hash_salt=user.get_password_hash_salt()
             )
@@ -33,3 +33,4 @@ class UserDB:
             return None
 
         return UserDto.from_orm(user_entity)
+
