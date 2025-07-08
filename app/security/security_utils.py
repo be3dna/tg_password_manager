@@ -50,7 +50,7 @@ def decrypt(encrypted: bytes, password: bytes, data_salt: bytes) -> bytes:
         raise ValueError("Invalid password or corrupted data")
 
 
-def get_hash(key: bytes, salt: bytes = os.urandom(_SALT_SIZE)) -> Tuple[str, str]:
+def get_hash(key: bytes, salt: bytes = os.urandom(_SALT_SIZE)) -> Tuple[bytes, bytes]:
     """
     Generate a secure hash and salt from a password using PBKDF2.
 
@@ -63,7 +63,7 @@ def get_hash(key: bytes, salt: bytes = os.urandom(_SALT_SIZE)) -> Tuple[str, str
 
     """
     password_salted = salt + key
-    return hashlib.sha256(password_salted).hexdigest(), salt.hex()
+    return hashlib.sha256(password_salted).digest(), salt
 
 
 def _get_cipher(password: bytes, salt: bytes) -> Fernet:
