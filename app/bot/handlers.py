@@ -1,5 +1,6 @@
 import logging
 import string
+from random import Random
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, CopyTextButton, ReplyKeyboardMarkup, \
     KeyboardButton
@@ -8,9 +9,11 @@ from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes, Con
 
 from app.config import SERVICES_PER_PAGE
 from app.db.account import AccountDB
+from app.db.user import UserDB
 from app.dto.account import Account
+from app.dto.user import User
 from app.security.password_generator import generate
-from app.security.security_utils import encrypt, decrypt
+from app.security.security_utils import encrypt, decrypt, get_hash
 
 DEFAULT_GENERATION_SIZE = 16
 DEFAULT_GENERATION_ALPHABET = string.ascii_letters + string.digits + string.punctuation
@@ -18,9 +21,31 @@ DEFAULT_GENERATION_ALPHABET = string.ascii_letters + string.digits + string.punc
 # Включаем логирование
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
+random = Random()
+stickers = {
+    "CHOOSE": [
+        'CAACAgIAAxkBAAIECmhtJSy_oEXipnv9q6dvFR4PKkTOAAJ1AAOOiR49hHbdG_lTH_M2BA',
+        'CAACAgIAAxkBAAID9WhtHVmV7VwOjhhIhYIUv_yXuvFcAALYAAOrV8QLErq7V-AW7ik2BA'
+    ],
+    "APPROVED": [
+        "CAACAgIAAxkBAAIERWhtKi0dpM2pm5yEZdHbYFx8VZeXAAK5JgACuOERSNjm4ZIjUtqYNgQ",
+        "CAACAgIAAxkBAAIESWhtKqwYrdE4Zdo4MWPTF5vH98KaAAKbTgACHAmJSPXVOEFqJBLxNgQ",
+        "CAACAgEAAxkBAAIETWhtK0lc8Oby3Ot8gUQEnvRgAk_gAAICAAN_cEYcBcxk2DciK8g2BA"
+    ],
+    "DENIED": [
+        "CAACAgIAAxkBAAIER2htKk1CTCFqiGX0kWUyTi3Ksfy7AAI4JAACutcQSJqfkfiyfw9gNgQ",
+        "CAACAgIAAxkBAAIES2htKsG_HkqMr5DOxyaiaWwhGQ40AAKbRwACu0tYSNiEJY1aPU7WNgQ",
+        "CAACAgEAAxkBAAIET2htK0tL4PDuIiUVdvXhQOIQXgABwgACAwADf3BGHENZiEtY50bNNgQ"
+    ],
+    "SUCCESS": [
+        "CAACAgIAAxkBAAIESWhtKqwYrdE4Zdo4MWPTF5vH98KaAAKbTgACHAmJSPXVOEFqJBLxNgQ"
+    ]
+}
+
 ACCOUNT_LIST_BUTTON_MESSAGE = "📋 список аккаунтов"
 ADD_ACCOUNT_BUTTON_MESSAGE = "📥 добавить аккаунт"
 DELETE_ACCOUNT_BUTTON_MESSAGE = "❌ удалить аккаунт"
+SETTINGS_BUTTON_MESSAGE = "🛠 настройки"
 BACK_BUTTON_MESSAGE = "↪ назад"
 HOME_BUTTON_MESSAGE = "🏠 на главную"
 GENERATE_BUTTON_MESSAGE = "⚙ сгенерировать пароль"
@@ -28,23 +53,23 @@ EXIT_BUTTON_MESSAGE = "👋 Выйти"
 LOGIN_BUTTON_MESSAGE = "🔑 Войти"
 
 # Словарь для хранения паролей
-(UNAUTHED_STATE, LOGIN_STATE, PASSWORD_VERIFICATION_STATE, CMD_STATE,
+(UNAUTHED_STATE, LOGIN_STATE, SIGN_UP_STATE, PASSWORD_VERIFICATION_STATE, CMD_STATE,
  INPUT_SERVICE_STATE, INPUT_LOGIN_STATE, INPUT_PASSWORD_STATE,
  CHOOSE_STATE, CHOOSE_DELETING_STATE, CONFIRM_DELETE_STATE,
  GENERATE_PASSWORD_SIZE_STATE, GENERATE_PASSWORD_ALPHABET_STATE,
- GENERATE_PASSWORD_MANUAL_ALPHABET_STATE, GENERATE_PASSWORD) = range(14)
+ GENERATE_PASSWORD_MANUAL_ALPHABET_STATE, DEAD_END) = range(15)
 
 _START_MENU_MARKUP = ReplyKeyboardMarkup.from_row([
     KeyboardButton(LOGIN_BUTTON_MESSAGE),
     KeyboardButton(GENERATE_BUTTON_MESSAGE)
 ], resize_keyboard=True, one_time_keyboard=True)
-_MAIN_MENU_MARKUP = ReplyKeyboardMarkup.from_row([
-    KeyboardButton(ACCOUNT_LIST_BUTTON_MESSAGE),
-    KeyboardButton(ADD_ACCOUNT_BUTTON_MESSAGE),
-    KeyboardButton(GENERATE_BUTTON_MESSAGE),
-    KeyboardButton(EXIT_BUTTON_MESSAGE)
-], resize_keyboard=True)
-_GENERATION_BUTTONS_MARKUP = ReplyKeyboardMarkup.from_row([
+_MAIN_MENU_MARKUP = ReplyKeyboardMarkup([
+    [KeyboardButton(ACCOUNT_LIST_BUTTON_MESSAGE), KeyboardButton(GENERATE_BUTTON_MESSAGE)],
+    [KeyboardButton(ADD_ACCOUNT_BUTTON_MESSAGE), KeyboardButton(DELETE_ACCOUNT_BUTTON_MESSAGE)],
+    [KeyboardButton(SETTINGS_BUTTON_MESSAGE), KeyboardButton(EXIT_BUTTON_MESSAGE)]
+], resize_keyboard=True, one_time_keyboard=True)
+
+_HOME_AND_BACK_BUTTONS_MARKUP = ReplyKeyboardMarkup.from_row([
     KeyboardButton(BACK_BUTTON_MESSAGE),
     KeyboardButton(HOME_BUTTON_MESSAGE)
 ], resize_keyboard=True)
@@ -53,6 +78,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     logging.info("handled: start")
     if await auth_check(update, context):
         return CMD_STATE
+        return await main_menu(update, context)
 
     await update.message.reply_text(
         "Добро пожаловать! Введите:" +
@@ -64,22 +90,50 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 async def login(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     logging.info("handled: login")
+    user_id = update.effective_user.id
+    user = await UserDB.get_user(user_id=user_id)
+
+    if user is None:
+        return await sign_up(update, context)
+
     await update.message.reply_text("Введите мастер пароль:")
     return PASSWORD_VERIFICATION_STATE
 
+
+async def sign_up(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.message.reply_text(
+        "Данного аккаунта нет в базе денных.\n Необходимо придумать мастер пароль (не менее 8 символов):")
+    return SIGN_UP_STATE
+
+
+async def set_user_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    data = update.message.text
+    if len(data) < 8 or data.__contains__(' '):
+        await update.message.reply_text("Пароль не может содержать менее 8 символов, пробелы итд.")
+        return await sign_up(update, context)
+
+    _hash, salt = get_hash(data.encode())
+    user = User(update.effective_user.id, _hash, salt)
+    await UserDB.add_user(user=user)
+    await show_stickers_of_placeholder(context, update.message, "SUCCESS", placeholder="Пароль успешно сохранен!")
+    return await login(update, context)
 
 async def verify_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     logging.info("handled: verify_password")
 
     if update.message.text is not None:
-        #todo context.user_data['secret'] = update.message.text
-        context.user_data['secret'] = "master"
+        context.user_data['secret'] = update.message.text
+
+    return await is_authorized(update, context)
+
+
+async def is_authorized(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    logging.info("handled: is_authorized")
 
     if not await auth_check(update, context):
         return await start(update, context)
 
     return await main_menu(update, context)
-
 
 async def logout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     logging.info("handled: logout")
@@ -96,6 +150,14 @@ async def auth_check(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool
     # todo pass verification
     return True
 
+    password = context.user_data['secret']
+    user_id = update.effective_user.id
+    user = await UserDB.get_user(user_id)
+
+    _hash, _ = get_hash(password.encode(), user.get_password_hash_salt())
+
+    return user.get_password_hash() == _hash
+
 
 async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     logging.info("handled: main_menu")
@@ -108,7 +170,23 @@ async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return CMD_STATE
 
 
-# add
+async def toggle_stickers(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if context.user_data.get('is_stickers_active') is None:
+        context.user_data['is_stickers_active'] = True
+    else:
+        context.user_data['is_stickers_active'] = not context.user_data['is_stickers_active']
+
+
+async def show_stickers_of_placeholder(context, message, stickers_type, reply_markup=None,
+                                       placeholder="^----------------------------------^"):
+    if context.user_data.get('is_stickers_active') is not None and context.user_data['is_stickers_active']:
+        choose_stickers = stickers.get(stickers_type)
+        await message.reply_sticker(random.choice(choose_stickers), reply_markup=reply_markup)
+    else:
+        await message.reply_text(placeholder, reply_markup=reply_markup)
+
+
+    # add
 async def new_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not await auth_check(update, context):
         return UNAUTHED_STATE
@@ -130,10 +208,6 @@ async def add_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 
     context.user_data['service'] = service_name
 
-    generate_password_kb = InlineKeyboardMarkup(
-        [[InlineKeyboardButton(text='Сгенерировать', callback_data='generate_password')]]
-    )
-    await update.message.reply_text(f'Введи логин для сервиса {service_name}', reply_markup=generate_password_kb)
     await update.message.reply_text(f'Введи логин для сервиса {service_name}')
     return INPUT_LOGIN_STATE
 
@@ -159,6 +233,10 @@ async def add_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     await update.message.reply_text(f'Пароль для сервиса {service} был успешно сохранен')
     return CMD_STATE
 
+    await show_stickers_of_placeholder(context, update.callback_query.message, "SUCCESS", _HOME_AND_BACK_BUTTONS_MARKUP,
+                                       "🎉🎉🎉")
+    return DEAD_END
+
 async def add_generated_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
     service = context.user_data['service']
@@ -168,7 +246,7 @@ async def add_generated_password(update: Update, context: ContextTypes.DEFAULT_T
     account = Account(user_id, service, login, encrypted_password, salt)
 
     copy_password_kb = InlineKeyboardMarkup(
-        [[InlineKeyboardButton(text='Скопировать', copy_text=password)]]
+        [[InlineKeyboardButton(text='Скопировать', copy_text=CopyTextButton(password))]]
     )
 
     await AccountDB.save_account(account)
@@ -176,6 +254,11 @@ async def add_generated_password(update: Update, context: ContextTypes.DEFAULT_T
     await update.callback_query.message.reply_text(f'Пароль для сервиса {service} был успешно сгенерирован',
                                                    reply_markup=copy_password_kb)
     return CMD_STATE
+
+    await show_stickers_of_placeholder(context, update.callback_query.message, "SUCCESS", _HOME_AND_BACK_BUTTONS_MARKUP,
+                                       "🎉🎉🎉")
+
+    return DEAD_END
 
 
 # list
@@ -226,7 +309,25 @@ async def list_services(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         message = update.callback_query.message
     await message.reply_text('Выберите сервис:', reply_markup=reply_markup)
 
+    await show_stickers_of_placeholder(context, message, "CHOOSE", _HOME_AND_BACK_BUTTONS_MARKUP)
+
     return CHOOSE_STATE
+
+
+async def send_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    del (context.user_data['page'])
+    user_id = update.effective_user.id
+    service = update.callback_query.data.split('_', 1)[1]
+    account = await AccountDB.get_account(user_id=user_id, service=service)
+    login = account.get_login()
+    password = account.get_password()
+    password = decrypt(password, context.user_data["secret"].encode(), account.get_password_salt())
+    copy_kb = InlineKeyboardMarkup([[InlineKeyboardButton('Копировать login', copy_text=CopyTextButton(login))],
+                                    [InlineKeyboardButton('Копировать password',
+                                                          copy_text=CopyTextButton(password.decode()))]])
+    await update.callback_query.answer()
+    await update.callback_query.message.reply_text(f'Ваш пароль от сервиса {service}.', reply_markup=copy_kb)
+    return DEAD_END
 
 
 # generate
@@ -236,6 +337,7 @@ async def generation_dialog_start(update: Update, context: ContextTypes.DEFAULT_
 
 async def ask_password_size(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("Введите желаемую длину пароля:", reply_markup=_GENERATION_BUTTONS_MARKUP)
+    await update.message.reply_text("Введите желаемую длину пароля:", reply_markup=_HOME_AND_BACK_BUTTONS_MARKUP)
     return GENERATE_PASSWORD_SIZE_STATE
 
 async def set_generator_password_size(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -316,7 +418,6 @@ async def set_generator_password_alphabet(update: Update, context: ContextTypes.
     context.user_data['generator_password_alphabet'] = alphabet
     return await generate_password(update, context)
 
-
 async def ask_password_alphabet_manual(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("Введите строку символов, которые будут использоваться при создании пароля:")
     return GENERATE_PASSWORD_MANUAL_ALPHABET_STATE
@@ -365,6 +466,7 @@ async def send_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     await update.callback_query.answer()
     await update.callback_query.message.reply_text(f'Ваш пароль от сервиса {service}.', reply_markup=copy_kb)
     return CMD_STATE
+    return DEAD_END
 
 
 # delete
@@ -407,7 +509,10 @@ async def delete_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     else:
         await update.callback_query.answer()
         message = update.callback_query.message
+
     await message.reply_text('Выберите сервис:', reply_markup=reply_markup)
+
+    await show_stickers_of_placeholder(context, message, "CHOOSE", _HOME_AND_BACK_BUTTONS_MARKUP)
 
     return CHOOSE_DELETING_STATE
 
@@ -429,13 +534,14 @@ async def confirm_delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     service = context.user_data['service_to_delete']
     await AccountDB.delete_account(user_id=user_id, service=service)
     await update.callback_query.answer()
-    await update.callback_query.message.reply_text(f'Пароль для сервиса {service} был удален')
-    return await main_menu(update, context)
+    await update.callback_query.message.reply_text(f'Пароль для сервиса {service} был удален',
+                                                   reply_markup=_HOME_AND_BACK_BUTTONS_MARKUP)
+    return DEAD_END
 
 async def cancel_delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.callback_query.answer()
-    await update.callback_query.message.reply_text('Удаление было отменено')
-    return await main_menu(update, context)
+    await update.callback_query.message.reply_text('Удаление было отменено', reply_markup=_HOME_AND_BACK_BUTTONS_MARKUP)
+    return DEAD_END
 
 
 ##
@@ -456,6 +562,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text("Неизвестная команда")
 
 
+async def get_sticker_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    file_id = update.message.sticker.file_id
+    message = f"Sticker's file id: {file_id}"
+    logging.info(message)
 
 conversation_handler = ConversationHandler(
     entry_points=[CommandHandler('start', start)],
@@ -469,6 +579,14 @@ conversation_handler = ConversationHandler(
         ],
         PASSWORD_VERIFICATION_STATE: [
             MessageHandler(filters.TEXT & ~filters.COMMAND, verify_password)
+        ],
+        SIGN_UP_STATE: [
+            CommandHandler('home', is_authorized),
+            MessageHandler(filters.TEXT & filters.Text([HOME_BUTTON_MESSAGE]), is_authorized),
+            MessageHandler(filters.TEXT & filters.Text([BACK_BUTTON_MESSAGE]), is_authorized),
+
+            MessageHandler(filters.TEXT & ~filters.COMMAND, set_user_password)
+
         ],
         CMD_STATE: [
             CommandHandler('add', new_password),
@@ -497,28 +615,40 @@ conversation_handler = ConversationHandler(
             CallbackQueryHandler(pattern='^generate_password$', callback=add_generated_password)
         ],
         CHOOSE_STATE: [
+            CommandHandler('home', is_authorized),
+            MessageHandler(filters.TEXT & filters.Text([HOME_BUTTON_MESSAGE]), is_authorized),
+            MessageHandler(filters.TEXT & filters.Text([BACK_BUTTON_MESSAGE]), is_authorized),
+
             CallbackQueryHandler(pattern='^previous_page$|^next_page$', callback=list_services),
             CallbackQueryHandler(pattern='^service_.+$', callback=send_password)
         ],
         CHOOSE_DELETING_STATE: [
+            CommandHandler('home', is_authorized),
+            MessageHandler(filters.TEXT & filters.Text([HOME_BUTTON_MESSAGE]), is_authorized),
+            MessageHandler(filters.TEXT & filters.Text([BACK_BUTTON_MESSAGE]), is_authorized),
+
             CallbackQueryHandler(pattern='^previous_page$|^next_page$', callback=delete_service),
             CallbackQueryHandler(pattern='^del_service_.+$', callback=delete_password)
         ],
         CONFIRM_DELETE_STATE: [
+            CommandHandler('home', is_authorized),
+            MessageHandler(filters.TEXT & filters.Text([HOME_BUTTON_MESSAGE]), is_authorized),
+            MessageHandler(filters.TEXT & filters.Text([BACK_BUTTON_MESSAGE]), delete_service),
+
             CallbackQueryHandler(pattern='^confirm_delete$', callback=confirm_delete),
             CallbackQueryHandler(pattern='^cancel_delete$', callback=cancel_delete)
         ],
         GENERATE_PASSWORD_SIZE_STATE: [
-            CommandHandler('home', verify_password),
-            MessageHandler(filters.TEXT & filters.Text([HOME_BUTTON_MESSAGE]), verify_password),
-            MessageHandler(filters.TEXT & filters.Text([BACK_BUTTON_MESSAGE]), verify_password),
+            CommandHandler('home', is_authorized),
+            MessageHandler(filters.TEXT & filters.Text([HOME_BUTTON_MESSAGE]), is_authorized),
+            MessageHandler(filters.TEXT & filters.Text([BACK_BUTTON_MESSAGE]), is_authorized),
 
             MessageHandler(filters.TEXT & filters.Regex(r"^\d+$"), set_generator_password_size),
             MessageHandler(filters.ALL, ask_password_size)
         ],
         GENERATE_PASSWORD_ALPHABET_STATE: [
-            CommandHandler('home', verify_password),
-            MessageHandler(filters.TEXT & filters.Text([HOME_BUTTON_MESSAGE]), verify_password),
+            CommandHandler('home', is_authorized),
+            MessageHandler(filters.TEXT & filters.Text([HOME_BUTTON_MESSAGE]), is_authorized),
             MessageHandler(filters.TEXT & filters.Text([BACK_BUTTON_MESSAGE]), ask_password_size),
 
             CallbackQueryHandler(pattern='^alphabet_approve$', callback=set_generator_password_alphabet),
@@ -526,15 +656,15 @@ conversation_handler = ConversationHandler(
             CallbackQueryHandler(pattern='^toggle_.+$', callback=ask_password_alphabet)
         ],
         GENERATE_PASSWORD_MANUAL_ALPHABET_STATE: [
-            CommandHandler('home', verify_password),
-            MessageHandler(filters.TEXT & filters.Text([HOME_BUTTON_MESSAGE]), verify_password),
+            CommandHandler('home', is_authorized),
+            MessageHandler(filters.TEXT & filters.Text([HOME_BUTTON_MESSAGE]), is_authorized),
             MessageHandler(filters.TEXT & filters.Text([BACK_BUTTON_MESSAGE]), ask_password_alphabet),
 
             MessageHandler(filters.TEXT, set_generator_password_alphabet_manual)
         ],
-        GENERATE_PASSWORD: [
-            CommandHandler('home', verify_password),
-            MessageHandler(filters.TEXT & filters.Text([HOME_BUTTON_MESSAGE]), verify_password)
+        DEAD_END: [
+            CommandHandler('home', is_authorized),
+            MessageHandler(filters.TEXT & filters.Text([HOME_BUTTON_MESSAGE]), is_authorized)
         ]
     },
     fallbacks=[],
