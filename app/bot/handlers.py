@@ -147,8 +147,6 @@ async def auth_check(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool
     logging.info("handled: auth_check")
     if context.user_data.get('secret') is None:
         return False
-    # todo pass verification
-    return True
 
     password = context.user_data['secret']
     user_id = update.effective_user.id
@@ -231,7 +229,6 @@ async def add_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 
     await AccountDB.save_account(account)
     await update.message.reply_text(f'Пароль для сервиса {service} был успешно сохранен')
-    return CMD_STATE
 
     await show_stickers_of_placeholder(context, update.callback_query.message, "SUCCESS", _HOME_AND_BACK_BUTTONS_MARKUP,
                                        "🎉🎉🎉")
@@ -253,7 +250,6 @@ async def add_generated_password(update: Update, context: ContextTypes.DEFAULT_T
     await update.callback_query.answer()
     await update.callback_query.message.reply_text(f'Пароль для сервиса {service} был успешно сгенерирован',
                                                    reply_markup=copy_password_kb)
-    return CMD_STATE
 
     await show_stickers_of_placeholder(context, update.callback_query.message, "SUCCESS", _HOME_AND_BACK_BUTTONS_MARKUP,
                                        "🎉🎉🎉")
@@ -336,7 +332,6 @@ async def generation_dialog_start(update: Update, context: ContextTypes.DEFAULT_
     return await ask_password_size(update, context)
 
 async def ask_password_size(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text("Введите желаемую длину пароля:", reply_markup=_GENERATION_BUTTONS_MARKUP)
     await update.message.reply_text("Введите желаемую длину пароля:", reply_markup=_HOME_AND_BACK_BUTTONS_MARKUP)
     return GENERATE_PASSWORD_SIZE_STATE
 
@@ -450,22 +445,6 @@ async def generate_password(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     copy_kb = InlineKeyboardMarkup([[InlineKeyboardButton('Копировать password', copy_text=CopyTextButton(password))]])
     await message.reply_text('Пароль сгенерирован!', reply_markup=copy_kb)
 
-    return GENERATE_PASSWORD
-
-async def send_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    del (context.user_data['page'])
-    user_id = update.effective_user.id
-    service = update.callback_query.data.split('_', 1)[1]
-    account = await AccountDB.get_account(user_id=user_id, service=service)
-    login = account.get_login()
-    password = account.get_password()
-    password = decrypt(password, context.user_data["secret"].encode(), account.get_password_salt())
-    copy_kb = InlineKeyboardMarkup([[InlineKeyboardButton('Копировать login', copy_text=CopyTextButton(login))],
-                                    [InlineKeyboardButton('Копировать password',
-                                                          copy_text=CopyTextButton(password.decode()))]])
-    await update.callback_query.answer()
-    await update.callback_query.message.reply_text(f'Ваш пароль от сервиса {service}.', reply_markup=copy_kb)
-    return CMD_STATE
     return DEAD_END
 
 
@@ -565,6 +544,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def get_sticker_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     file_id = update.message.sticker.file_id
     message = f"Sticker's file id: {file_id}"
+    await update.message.reply_text(message)
     logging.info(message)
 
 conversation_handler = ConversationHandler(

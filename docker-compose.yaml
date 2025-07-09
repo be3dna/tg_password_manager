@@ -1,21 +1,35 @@
 services:
   tg_password_manager:
     build: .
-    command: ["python", "app/main.py"]
+    command: >
+      sh -c "alembic upgrade head && exec python app/main.py"
+
     depends_on:
       postgres:
         condition: service_healthy
+    networks:
+      - tg_bot_network
+
 
   postgres:
     image: postgres:14
     restart: "unless-stopped"
     env_file: .env
-    volumes:
-      - ./scrypt/:/docker-entrypoint-initdb.d/
 
+    networks:
+      - tg_bot_network
+    ports:
+      - "5432:5432"
 
     healthcheck:
       test: ["CMD-SHELL", "sh -c 'pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}'"]
       interval: 10s
       timeout: 3s
       retries: 3
+
+
+
+networks:
+  tg_bot_network:
+    driver: bridge
+

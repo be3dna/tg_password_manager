@@ -1,7 +1,7 @@
 from sqlalchemy import Integer, BigInteger, Text, LargeBinary, String
 from sqlalchemy.orm import mapped_column, Mapped
 
-from app.entities import Base
+from app.entities.base import Base
 
 
 class Account(Base):

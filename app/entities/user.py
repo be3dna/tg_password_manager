@@ -1,7 +1,7 @@
 from sqlalchemy import Integer, Text, BigInteger, LargeBinary
 from sqlalchemy.orm import mapped_column, Mapped
 
-from app.entities import Base
+from app.entities.base import Base
 
 
 class User(Base):
