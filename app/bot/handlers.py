@@ -15,6 +15,8 @@ from app.dto.user import User
 from app.security.password_generator import generate
 from app.security.security_utils import encrypt, decrypt, get_hash
 
+STANDART_MESSAGE_PLACEHOLDER = "^----------------------------------^"
+
 DEFAULT_GENERATION_SIZE = 16
 DEFAULT_GENERATION_ALPHABET = string.ascii_letters + string.digits + string.punctuation
 
@@ -68,83 +70,142 @@ _MAIN_MENU_MARKUP = ReplyKeyboardMarkup([
     [KeyboardButton(ADD_ACCOUNT_BUTTON_MESSAGE), KeyboardButton(DELETE_ACCOUNT_BUTTON_MESSAGE)],
     [KeyboardButton(SETTINGS_BUTTON_MESSAGE), KeyboardButton(EXIT_BUTTON_MESSAGE)]
 ], resize_keyboard=True, one_time_keyboard=True)
-
 _HOME_AND_BACK_BUTTONS_MARKUP = ReplyKeyboardMarkup.from_row([
     KeyboardButton(BACK_BUTTON_MESSAGE),
     KeyboardButton(HOME_BUTTON_MESSAGE)
 ], resize_keyboard=True)
+_HOME_BUTTON_MARKUP = ReplyKeyboardMarkup.from_row([
+    KeyboardButton(HOME_BUTTON_MESSAGE)
+], resize_keyboard=True, one_time_keyboard=True)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    logging.info("handled: start")
     if await auth_check(update, context):
-        return CMD_STATE
         return await main_menu(update, context)
 
-    await update.message.reply_text(
+    message = await update.message.reply_text(
         "Добро пожаловать! Введите:" +
         "\n\t /login - для входа" +
         "\n\t /generate - для начала диалога генерации пароля" +
         "\n\t /generate <size> - для генерации пароля указанной длинны", reply_markup=_START_MENU_MARKUP)
+
+    message_id_list = [message.message_id]
+    if update.message is not None: message_id_list.append(update.message.id)
+    save_message_id(update.effective_chat.id, message_id_list, context)
     return UNAUTHED_STATE
 
 
+def save_message_id(chat_id, message_id_list: list[int], context: ContextTypes.DEFAULT_TYPE) -> None:
+    message_archive = context.user_data.get('message_id_archive', [])
+    for message_id in message_id_list:
+        message_archive.append([chat_id, message_id])
+    context.user_data['message_id_archive'] = message_archive
+
+
+def save_sensitive_message_id(chat_id, message_id_list: list[int], context: ContextTypes.DEFAULT_TYPE) -> None:
+    message_archive = context.user_data.get('sensitive_message_id_archive', [])
+    for message_id in message_id_list:
+        message_archive.append([chat_id, message_id])
+    context.user_data['sensitive_message_id_archive'] = message_archive
+
 async def login(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    logging.info("handled: login")
     user_id = update.effective_user.id
     user = await UserDB.get_user(user_id=user_id)
 
     if user is None:
         return await sign_up(update, context)
 
-    await update.message.reply_text("Введите мастер пароль:")
+    message = await update.message.reply_text("Введите мастер пароль:")
+    save_message_id(update.effective_chat.id, [message.message_id], context)
     return PASSWORD_VERIFICATION_STATE
 
-
 async def sign_up(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text(
-        "Данного аккаунта нет в базе денных.\n Необходимо придумать мастер пароль (не менее 8 символов):")
+    message = await update.message.reply_text(
+        """Данного аккаунта нет в базе денных.
+            Необходимо придумать мастер пароль (не менее 8 символов):""")
+    save_message_id(update.effective_chat.id, [message.message_id], context)
     return SIGN_UP_STATE
 
-
 async def set_user_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    message_id_list = []
+    if update.message is not None:
+        save_sensitive_message_id(update.effective_chat.id, [update.message.message_id], context)
+
     data = update.message.text
     if len(data) < 8 or data.__contains__(' '):
-        await update.message.reply_text("Пароль не может содержать менее 8 символов, пробелы итд.")
+        message = await update.message.reply_text("Пароль не может содержать менее 8 символов, пробелы итд.")
+        message_id_list.append(message.message_id)
+        save_message_id(update.effective_chat.id, message_id_list, context)
         return await sign_up(update, context)
 
     _hash, salt = get_hash(data.encode())
     user = User(update.effective_user.id, _hash, salt)
     await UserDB.add_user(user=user)
-    await show_stickers_of_placeholder(context, update.message, "SUCCESS", placeholder="Пароль успешно сохранен!")
+
+    await show_stickers_of_placeholder(update, context, "SUCCESS", placeholder="Пароль успешно сохранен!")
+
+    save_message_id(update.effective_chat.id, message_id_list, context)
     return await login(update, context)
 
 async def verify_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    logging.info("handled: verify_password")
 
     if update.message.text is not None:
         context.user_data['secret'] = update.message.text
+        save_sensitive_message_id(update.effective_chat.id, [update.message.id], context)
 
     return await is_authorized(update, context)
 
-
 async def is_authorized(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    logging.info("handled: is_authorized")
+    await erase_sensitive_message(update, context)
+    # await erase_last_message(update, context)
 
     if not await auth_check(update, context):
         return await start(update, context)
 
     return await main_menu(update, context)
 
+
+async def erase_last_message(update: Update, context: ContextTypes.DEFAULT_TYPE, count: int = 1) -> None:
+    message_id_list: list[list[int]] = context.user_data.get('message_id_archive')
+
+    if message_id_list is not None and len(message_id_list) >= count:
+        for _ in range(count):
+            message_data = message_id_list.pop()
+            await erase_message(context, message_data[0], message_data[1])
+
+
+async def erase_sensitive_message(update: Update, context: ContextTypes.DEFAULT_TYPE, count: int = None) -> None:
+    message_id_list: list[list[int]] = context.user_data.get('sensitive_message_id_archive')
+
+    if message_id_list is None:
+        return
+
+    if count is None or count > len(message_id_list):
+        count = len(message_id_list)
+
+    for _ in range(count):
+        message_data = message_id_list.pop()
+        await erase_message(context, message_data[0], message_data[1])
+
+
+async def erase_message(context, chat_id, message_id):
+    try:
+        await context.bot.delete_message(chat_id, message_id)
+    except Exception:
+        logging.error("Cant delete message")
+
+
 async def logout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    logging.info("handled: logout")
     del (context.user_data['secret'])
-    logging.info(f"Logout state: {context.user_data.get('secret')}")
+
+    messages_archive = context.user_data.get('message_id_archive')
+    if messages_archive is not None:
+        await erase_last_message(update, context, len(messages_archive))
+    await erase_sensitive_message(update, context)
+
     await update.message.reply_text("Logout success!")
     return await start(update, context)
 
-
 async def auth_check(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    logging.info("handled: auth_check")
     if context.user_data.get('secret') is None:
         return False
 
@@ -156,70 +217,100 @@ async def auth_check(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool
 
     return user.get_password_hash() == _hash
 
-
 async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    logging.info("handled: main_menu")
+    message_id_list = []
+    if update.message is not None:
+        message_id_list.append(update.message.message_id)
+
     if not await auth_check(update, context):
-        logging.info("auth_check is false")
+        save_message_id(update.effective_chat.id, message_id_list, context)
         return UNAUTHED_STATE
-    await update.message.reply_text(
+
+    message = await update.message.reply_text(
         'Привет! Используй /add для добавления пароля, /list для просмотра, а /del - для удаления!',
         reply_markup=_MAIN_MENU_MARKUP)
+    message_id_list.append(message.message_id)
+
+    save_message_id(update.effective_chat.id, message_id_list, context)
     return CMD_STATE
 
-
 async def toggle_stickers(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.message is not None:
+        save_message_id(update.effective_chat.id, [update.message.id], context)
+
     if context.user_data.get('is_stickers_active') is None:
         context.user_data['is_stickers_active'] = True
     else:
         context.user_data['is_stickers_active'] = not context.user_data['is_stickers_active']
 
 
-async def show_stickers_of_placeholder(context, message, stickers_type, reply_markup=None,
-                                       placeholder="^----------------------------------^"):
-    if context.user_data.get('is_stickers_active') is not None and context.user_data['is_stickers_active']:
-        choose_stickers = stickers.get(stickers_type)
-        await message.reply_sticker(random.choice(choose_stickers), reply_markup=reply_markup)
+async def show_stickers_of_placeholder(update: Update, context: ContextTypes.DEFAULT_TYPE, stickers_type,
+                                       reply_markup=None,
+                                       placeholder=STANDART_MESSAGE_PLACEHOLDER):
+    if update.message:
+        message = update.message
     else:
-        await message.reply_text(placeholder, reply_markup=reply_markup)
+        await update.callback_query.answer()
+        message = update.callback_query.message
+
+    is_stickers = context.user_data.get('is_stickers_active')
+    if is_stickers is not None and is_stickers:
+        choose_stickers = stickers.get(stickers_type)
+        msg = await message.reply_sticker(random.choice(choose_stickers), reply_markup=reply_markup)
+    else:
+        msg = await message.reply_text(placeholder, reply_markup=reply_markup)
+
+    save_message_id(update.effective_chat.id, [message.message_id, msg.message_id], context)
 
 
-    # add
-async def new_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+# add
+async def new_account(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not await auth_check(update, context):
         return UNAUTHED_STATE
-    reply_markup = ReplyKeyboardMarkup.from_row([
-        KeyboardButton(HOME_BUTTON_MESSAGE)
-    ], resize_keyboard=True, one_time_keyboard=True)
 
-    await update.message.reply_text('Введи название сервиса', reply_markup=reply_markup)
+    message = await update.message.reply_text('Введи название сервиса', reply_markup=_HOME_BUTTON_MARKUP)
+
+    save_message_id(update.effective_chat.id, [message.message_id], context)
     return INPUT_SERVICE_STATE
 
 async def add_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    message_id_list = [update.message.message_id]
     service_name = update.message.text
     user_id = update.effective_user.id
 
     account = await AccountDB.get_account(user_id=user_id, service=service_name)
     if account is not None:
-        await update.message.reply_text(f'Пароль для сервиса {service_name} уже добавлен')
+        msg = await update.message.reply_text(f'Пароль для сервиса {service_name} уже добавлен')
+        message_id_list.append(msg.message_id)
+        save_message_id(update.effective_chat, message_id_list, context)
         return CMD_STATE
 
     context.user_data['service'] = service_name
 
-    await update.message.reply_text(f'Введи логин для сервиса {service_name}')
+    msg = await update.message.reply_text(f'Введи логин для сервиса {service_name}')
+    message_id_list.append(msg.message_id)
+    save_message_id(update.effective_chat, message_id_list, context)
+
     return INPUT_LOGIN_STATE
 
 async def add_login(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    message_id_list = [update.message.message_id]
+
     service_login = update.message.text
     context.user_data['login'] = service_login
+
     generate_password_kb = InlineKeyboardMarkup(
         [[InlineKeyboardButton(text='Сгенерировать', callback_data='generate_password')]]
     )
-    await update.message.reply_text(f'Введи пароль для сервиса {context.user_data["service"]}',
+    msg = await update.message.reply_text(f'Введи пароль для сервиса {context.user_data["service"]}',
                                     reply_markup=generate_password_kb)
+
+    message_id_list.append(msg.message_id)
+    save_message_id(update.effective_chat, message_id_list, context)
     return INPUT_PASSWORD_STATE
 
 async def add_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+
     user_id = update.effective_user.id
     service = context.user_data['service']
     login = context.user_data['login']
@@ -228,10 +319,13 @@ async def add_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     account = Account(user_id, service, login, password, salt)
 
     await AccountDB.save_account(account)
-    await update.message.reply_text(f'Пароль для сервиса {service} был успешно сохранен')
 
-    await show_stickers_of_placeholder(context, update.callback_query.message, "SUCCESS", _HOME_AND_BACK_BUTTONS_MARKUP,
+    await erase_message(context, update.effective_chat.id, update.message.message_id)
+    msg = await update.message.reply_text(f'Пароль для сервиса {service} был успешно сохранен')
+    await show_stickers_of_placeholder(update, context, "SUCCESS", _HOME_BUTTON_MARKUP,
                                        "🎉🎉🎉")
+
+    save_message_id(update.effective_chat, [msg.message_id], context)
     return DEAD_END
 
 async def add_generated_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -248,19 +342,28 @@ async def add_generated_password(update: Update, context: ContextTypes.DEFAULT_T
 
     await AccountDB.save_account(account)
     await update.callback_query.answer()
-    await update.callback_query.message.reply_text(f'Пароль для сервиса {service} был успешно сгенерирован',
+    msg = await update.callback_query.message.reply_text(f'Пароль для сервиса {service} был успешно сгенерирован',
                                                    reply_markup=copy_password_kb)
 
-    await show_stickers_of_placeholder(context, update.callback_query.message, "SUCCESS", _HOME_AND_BACK_BUTTONS_MARKUP,
+    await show_stickers_of_placeholder(update, context, "SUCCESS", _HOME_BUTTON_MARKUP,
                                        "🎉🎉🎉")
 
+    save_sensitive_message_id(update.effective_chat.id, [msg.message_id], context)
     return DEAD_END
 
 
 # list
 async def list_services(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | None:
+    message_id_list = []
+
+    if update.message is not None:
+        message = update.message
+        message_id_list.append(update.message.message_id)
+    else:
+        await update.callback_query.answer()
+        message = update.callback_query.message
+
     if not await auth_check(update, context):
-        return UNAUTHED_STATE
         return await start(update, context)
 
     user_id = update.effective_user.id
@@ -279,8 +382,10 @@ async def list_services(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     page = context.user_data['page']
 
     if not services:
-        await update.message.reply_text('Нет сохраненных паролей.')
+        msg = await update.message.reply_text('Нет сохраненных паролей.')
+        message_id_list.append(msg.message_id)
 
+        save_message_id(update.effective_chat.id, message_id_list, context)
         return await main_menu(update, context)
 
     # Пагинация
@@ -298,15 +403,13 @@ async def list_services(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         keyboard.append([InlineKeyboardButton('Вперед', callback_data='next_page')])
 
     reply_markup = InlineKeyboardMarkup(keyboard)
-    if update.message is not None:
-        message = update.message
-    else:
-        await update.callback_query.answer()
-        message = update.callback_query.message
-    await message.reply_text('Выберите сервис:', reply_markup=reply_markup)
 
-    await show_stickers_of_placeholder(context, message, "CHOOSE", _HOME_AND_BACK_BUTTONS_MARKUP)
+    msg = await message.reply_text('Выберите сервис:', reply_markup=reply_markup)
+    message_id_list.append(msg.message_id)
 
+    await show_stickers_of_placeholder(update, context, "CHOOSE", _HOME_AND_BACK_BUTTONS_MARKUP)
+
+    save_message_id(update.effective_chat.id, message_id_list, context)
     return CHOOSE_STATE
 
 
@@ -318,21 +421,29 @@ async def send_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     login = account.get_login()
     password = account.get_password()
     password = decrypt(password, context.user_data["secret"].encode(), account.get_password_salt())
+
     copy_kb = InlineKeyboardMarkup([[InlineKeyboardButton('Копировать login', copy_text=CopyTextButton(login))],
                                     [InlineKeyboardButton('Копировать password',
                                                           copy_text=CopyTextButton(password.decode()))]])
     await update.callback_query.answer()
-    await update.callback_query.message.reply_text(f'Ваш пароль от сервиса {service}.', reply_markup=copy_kb)
+    msg = await update.callback_query.message.reply_text(f'Ваш пароль от сервиса {service}.', reply_markup=copy_kb)
+
+    save_sensitive_message_id(update.effective_chat.id, [msg.message_id], context)
     return DEAD_END
 
 
 # generate
 
 async def generation_dialog_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if update.message is not None:
+        save_message_id(update.effective_chat.id, [update.message.message_id], context)
+
     return await ask_password_size(update, context)
 
 async def ask_password_size(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text("Введите желаемую длину пароля:", reply_markup=_HOME_AND_BACK_BUTTONS_MARKUP)
+    msg = await update.message.reply_text("Введите желаемую длину пароля:", reply_markup=_HOME_AND_BACK_BUTTONS_MARKUP)
+
+    save_message_id(update.effective_chat.id, [msg.message_id], context)
     return GENERATE_PASSWORD_SIZE_STATE
 
 async def set_generator_password_size(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -342,6 +453,7 @@ async def set_generator_password_size(update: Update, context: ContextTypes.DEFA
 
     context.user_data['generator_password_size'] = size
 
+    save_message_id(update.effective_chat.id, [update.message.message_id], context)
     return await ask_password_alphabet(update, context)
 
 def get_or_default(context: ContextTypes.DEFAULT_TYPE, name: str, default=True):
@@ -358,6 +470,7 @@ async def ask_password_alphabet(update: Update, context: ContextTypes.DEFAULT_TY
     alphabet_spec = get_or_default(context, 'generator_password_alphabet_spec')
 
     if update.callback_query is not None:
+        await erase_last_message(update, context)
         query = update.callback_query.data.split("_")[1]
         if query == "high":
             alphabet_high = not alphabet_high
@@ -392,10 +505,12 @@ async def ask_password_alphabet(update: Update, context: ContextTypes.DEFAULT_TY
     else:
         await update.callback_query.answer()
         message = update.callback_query.message
-    await message.reply_text(
+
+    msg = await message.reply_text(
         "Выберите символы, участвующие в генерации:",
         reply_markup=alphabet_checkboxes_markup)
 
+    save_message_id(update.effective_chat.id, [msg.message_id], context)
     return GENERATE_PASSWORD_ALPHABET_STATE
 
 async def set_generator_password_alphabet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -414,16 +529,21 @@ async def set_generator_password_alphabet(update: Update, context: ContextTypes.
     return await generate_password(update, context)
 
 async def ask_password_alphabet_manual(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text("Введите строку символов, которые будут использоваться при создании пароля:")
+    msg = await update.message.reply_text("Введите строку символов, которые будут использоваться при создании пароля:")
+
+    save_message_id(update.effective_chat.id, [msg.message_id], context)
     return GENERATE_PASSWORD_MANUAL_ALPHABET_STATE
 
 async def set_generator_password_alphabet_manual(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     alphabet = update.message.text
 
+
     if alphabet is None or len(alphabet) < 1:
         return await ask_password_alphabet_manual(update, context)
 
     context.user_data['generator_password_alphabet'] = alphabet
+
+    save_message_id(update.effective_chat.id, [update.message.message_id], context)
     return await generate_password(update, context)
 
 async def generate_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -443,13 +563,18 @@ async def generate_password(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         message = update.callback_query.message
 
     copy_kb = InlineKeyboardMarkup([[InlineKeyboardButton('Копировать password', copy_text=CopyTextButton(password))]])
-    await message.reply_text('Пароль сгенерирован!', reply_markup=copy_kb)
+    msg = await message.reply_text('Пароль сгенерирован!', reply_markup=copy_kb)
 
+    save_sensitive_message_id(update.effective_chat.id, [msg.message_id], context)
     return DEAD_END
 
 
 # delete
 async def delete_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    message_id_list = []
+    if update.message is not None:
+        message_id_list.append(update.message.message_id)
+
     user_id = update.effective_user.id
 
     if update.callback_query is None:
@@ -457,6 +582,8 @@ async def delete_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         services = await AccountDB.get_accounts(user_id=user_id)
         context.user_data['services'] = services[::]
     else:
+
+        await erase_last_message(update, context)
         services = context.user_data['services']
         if update.callback_query.data == 'next_page':
             context.user_data['page'] += 1
@@ -465,7 +592,10 @@ async def delete_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     page = context.user_data['page']
 
     if not services:
-        await update.message.reply_text('Нет сохраненных паролей.')
+        msg = await update.message.reply_text('Нет сохраненных паролей.')
+        message_id_list.append(msg.message_id)
+
+        save_message_id(update.effective_chat.id, message_id_list, context)
         return await main_menu(update, context)
 
     # Пагинация
@@ -489,10 +619,12 @@ async def delete_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.callback_query.answer()
         message = update.callback_query.message
 
-    await message.reply_text('Выберите сервис:', reply_markup=reply_markup)
+    msg = await message.reply_text('Выберите сервис:', reply_markup=reply_markup)
+    message_id_list.append(msg.message_id)
 
-    await show_stickers_of_placeholder(context, message, "CHOOSE", _HOME_AND_BACK_BUTTONS_MARKUP)
+    await show_stickers_of_placeholder(update, context, "CHOOSE", _HOME_AND_BACK_BUTTONS_MARKUP)
 
+    save_message_id(update.effective_chat.id, message_id_list, context)
     return CHOOSE_DELETING_STATE
 
 async def delete_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | None:
@@ -505,7 +637,10 @@ async def delete_password(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         ]
     )
     await update.callback_query.answer()
-    await update.callback_query.message.reply_text(f'Удалить запись для сервиса {service}?', reply_markup=delete_kb)
+    msg = await update.callback_query.message.reply_text(f'Удалить запись для сервиса {service}?',
+                                                         reply_markup=delete_kb)
+
+    save_message_id(update.effective_chat.id, [msg.message_id], context)
     return CONFIRM_DELETE_STATE
 
 async def confirm_delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -513,39 +648,34 @@ async def confirm_delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     service = context.user_data['service_to_delete']
     await AccountDB.delete_account(user_id=user_id, service=service)
     await update.callback_query.answer()
-    await update.callback_query.message.reply_text(f'Пароль для сервиса {service} был удален',
+    msg = await update.callback_query.message.reply_text(f'Пароль для сервиса {service} был удален',
                                                    reply_markup=_HOME_AND_BACK_BUTTONS_MARKUP)
+
+    save_message_id(update.effective_chat.id, [msg.message_id], context)
     return DEAD_END
 
 async def cancel_delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.callback_query.answer()
-    await update.callback_query.message.reply_text('Удаление было отменено', reply_markup=_HOME_AND_BACK_BUTTONS_MARKUP)
+    msg = await update.callback_query.message.reply_text('Удаление было отменено',
+                                                         reply_markup=_HOME_AND_BACK_BUTTONS_MARKUP)
+
+    save_message_id(update.effective_chat.id, [msg.message_id], context)
     return DEAD_END
 
 
 ##
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    commands = {
-        ACCOUNT_LIST_BUTTON_MESSAGE: list_services,
-        ADD_ACCOUNT_BUTTON_MESSAGE: new_password,
-        BACK_BUTTON_MESSAGE: None,
-        HOME_BUTTON_MESSAGE: start,
-        GENERATE_BUTTON_MESSAGE: generate_password,
-        EXIT_BUTTON_MESSAGE: None
-    }
-
-    command = commands.get(update.message.text)
-    if command:
-        await command(update, context)
-    else:
-        await update.message.reply_text("Неизвестная команда")
-
-
 async def get_sticker_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message_id_list = []
+    if update.message is not None:
+        message_id_list.append(update.message.message_id)
+
     file_id = update.message.sticker.file_id
     message = f"Sticker's file id: {file_id}"
-    await update.message.reply_text(message)
+    msg = await update.message.reply_text(message)
+    message_id_list.append(msg.message_id)
     logging.info(message)
+
+    save_message_id(update.effective_chat.id, message_id_list, context)
 
 conversation_handler = ConversationHandler(
     entry_points=[CommandHandler('start', start)],
@@ -569,8 +699,8 @@ conversation_handler = ConversationHandler(
 
         ],
         CMD_STATE: [
-            CommandHandler('add', new_password),
-            MessageHandler(filters.TEXT & filters.Text([ADD_ACCOUNT_BUTTON_MESSAGE]), new_password),
+            CommandHandler('add', new_account),
+            MessageHandler(filters.TEXT & filters.Text([ADD_ACCOUNT_BUTTON_MESSAGE]), new_account),
 
             CommandHandler('list', list_services),
             MessageHandler(filters.TEXT & filters.Text([ACCOUNT_LIST_BUTTON_MESSAGE]), list_services),
@@ -585,12 +715,24 @@ conversation_handler = ConversationHandler(
             MessageHandler(filters.TEXT & filters.Text([EXIT_BUTTON_MESSAGE]), logout)
         ],
         INPUT_SERVICE_STATE: [
+            CommandHandler('home', is_authorized),
+            MessageHandler(filters.TEXT & filters.Text([HOME_BUTTON_MESSAGE]), is_authorized),
+            MessageHandler(filters.TEXT & filters.Text([BACK_BUTTON_MESSAGE]), is_authorized),
+
             MessageHandler(filters.TEXT & ~filters.COMMAND, add_service)
         ],
         INPUT_LOGIN_STATE: [
+            CommandHandler('home', is_authorized),
+            MessageHandler(filters.TEXT & filters.Text([HOME_BUTTON_MESSAGE]), is_authorized),
+            MessageHandler(filters.TEXT & filters.Text([BACK_BUTTON_MESSAGE]), is_authorized),
+
             MessageHandler(filters.TEXT & ~filters.COMMAND, add_login)
         ],
         INPUT_PASSWORD_STATE: [
+            CommandHandler('home', is_authorized),
+            MessageHandler(filters.TEXT & filters.Text([HOME_BUTTON_MESSAGE]), is_authorized),
+            MessageHandler(filters.TEXT & filters.Text([BACK_BUTTON_MESSAGE]), is_authorized),
+
             MessageHandler(filters.TEXT & ~filters.COMMAND, add_password),
             CallbackQueryHandler(pattern='^generate_password$', callback=add_generated_password)
         ],
