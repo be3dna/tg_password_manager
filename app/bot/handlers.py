@@ -222,7 +222,8 @@ async def logout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         await erase_last_message(update, context, len(messages_archive))
     await erase_sensitive_message(update, context)
 
-    await update.message.reply_text("Logout success!")
+    msg = await update.message.reply_text("Logout success!")
+    save_message_id(update.effective_chat, [msg.message_id], context)
     return await start(update, context)
 
 @collector()
@@ -235,7 +236,8 @@ async def session_timeout(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await erase_last_message(update, context, len(messages_archive))
     await erase_sensitive_message(update, context)
 
-    await update.message.reply_text("Сессия была завершена из за длительной не активности.")
+    msg = await update.message.reply_text("Сессия была завершена из за длительной не активности.")
+    save_message_id(update.effective_chat, [msg.message_id], context)
 
     return ConversationHandler.END
 
