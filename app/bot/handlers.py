@@ -1,7 +1,7 @@
 import logging
 import string
 from random import Random
-
+import random
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, CopyTextButton, ReplyKeyboardMarkup, \
     KeyboardButton
 from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes, ConversationHandler, MessageHandler, \
@@ -23,7 +23,6 @@ DEFAULT_GENERATION_ALPHABET = string.ascii_letters + string.digits + string.punc
 # Включаем логирование
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-random = Random()
 stickers = {
     "CHOOSE": [
         'CAACAgIAAxkBAAIECmhtJSy_oEXipnv9q6dvFR4PKkTOAAJ1AAOOiR49hHbdG_lTH_M2BA',
@@ -68,7 +67,7 @@ _START_MENU_MARKUP = ReplyKeyboardMarkup.from_row([
 _MAIN_MENU_MARKUP = ReplyKeyboardMarkup([
     [KeyboardButton(ACCOUNT_LIST_BUTTON_MESSAGE), KeyboardButton(GENERATE_BUTTON_MESSAGE)],
     [KeyboardButton(ADD_ACCOUNT_BUTTON_MESSAGE), KeyboardButton(DELETE_ACCOUNT_BUTTON_MESSAGE)],
-    [KeyboardButton(SETTINGS_BUTTON_MESSAGE), KeyboardButton(EXIT_BUTTON_MESSAGE)]
+    [KeyboardButton(EXIT_BUTTON_MESSAGE)] # KeyboardButton(SETTINGS_BUTTON_MESSAGE),
 ], resize_keyboard=True, one_time_keyboard=True)
 _HOME_AND_BACK_BUTTONS_MARKUP = ReplyKeyboardMarkup.from_row([
     KeyboardButton(BACK_BUTTON_MESSAGE),
@@ -76,7 +75,7 @@ _HOME_AND_BACK_BUTTONS_MARKUP = ReplyKeyboardMarkup.from_row([
 ], resize_keyboard=True)
 _HOME_BUTTON_MARKUP = ReplyKeyboardMarkup.from_row([
     KeyboardButton(HOME_BUTTON_MESSAGE)
-], resize_keyboard=True, one_time_keyboard=True)
+], resize_keyboard=True)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if await auth_check(update, context):
@@ -93,13 +92,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     save_message_id(update.effective_chat.id, message_id_list, context)
     return UNAUTHED_STATE
 
-
 def save_message_id(chat_id, message_id_list: list[int], context: ContextTypes.DEFAULT_TYPE) -> None:
     message_archive = context.user_data.get('message_id_archive', [])
     for message_id in message_id_list:
         message_archive.append([chat_id, message_id])
     context.user_data['message_id_archive'] = message_archive
-
 
 def save_sensitive_message_id(chat_id, message_id_list: list[int], context: ContextTypes.DEFAULT_TYPE) -> None:
     message_archive = context.user_data.get('sensitive_message_id_archive', [])
@@ -159,8 +156,11 @@ async def is_authorized(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     # await erase_last_message(update, context)
 
     if not await auth_check(update, context):
+        await show_stickers_of_placeholder(update,context,"DENIED",placeholder=None)
         return await start(update, context)
 
+
+    await show_stickers_of_placeholder(update,context,"APPROVED",placeholder=None)
     return await main_menu(update, context)
 
 
@@ -227,7 +227,7 @@ async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         return UNAUTHED_STATE
 
     message = await update.message.reply_text(
-        'Привет! Используй /add для добавления пароля, /list для просмотра, а /del - для удаления!',
+        'Привет! Используй \n\t/add для добавления пароля, \n\t/list для просмотра, а \n\t/del - для удаления!',
         reply_markup=_MAIN_MENU_MARKUP)
     message_id_list.append(message.message_id)
 
@@ -247,20 +247,24 @@ async def toggle_stickers(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 async def show_stickers_of_placeholder(update: Update, context: ContextTypes.DEFAULT_TYPE, stickers_type,
                                        reply_markup=None,
                                        placeholder=STANDART_MESSAGE_PLACEHOLDER):
+    message_id_list =[]
     if update.message:
         message = update.message
     else:
         await update.callback_query.answer()
         message = update.callback_query.message
+    message_id_list.append(message.message_id)
 
     is_stickers = context.user_data.get('is_stickers_active')
     if is_stickers is not None and is_stickers:
         choose_stickers = stickers.get(stickers_type)
         msg = await message.reply_sticker(random.choice(choose_stickers), reply_markup=reply_markup)
-    else:
+        message_id_list.append(msg.message_id)
+    elif placeholder is not None:
         msg = await message.reply_text(placeholder, reply_markup=reply_markup)
+        message_id_list.append(msg.message_id)
 
-    save_message_id(update.effective_chat.id, [message.message_id, msg.message_id], context)
+    save_message_id(update.effective_chat.id, message_id_list, context)
 
 
 # add
@@ -268,9 +272,12 @@ async def new_account(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     if not await auth_check(update, context):
         return UNAUTHED_STATE
 
-    message = await update.message.reply_text('Введи название сервиса', reply_markup=_HOME_BUTTON_MARKUP)
+    message_id_list = []
 
-    save_message_id(update.effective_chat.id, [message.message_id], context)
+    message = await update.message.reply_text('Введи название сервиса', reply_markup=_HOME_BUTTON_MARKUP)
+    message_id_list.append(message.message_id)
+
+    save_message_id(update.effective_chat.id, message_id_list, context)
     return INPUT_SERVICE_STATE
 
 async def add_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -404,10 +411,14 @@ async def list_services(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    msg = await message.reply_text('Выберите сервис:', reply_markup=reply_markup)
-    message_id_list.append(msg.message_id)
-
-    await show_stickers_of_placeholder(update, context, "CHOOSE", _HOME_AND_BACK_BUTTONS_MARKUP)
+    if update.callback_query is None and page == 0:
+        msg = await message.reply_text('Выберите сервис:', reply_markup=reply_markup)
+        message_id_list.append(msg.message_id)
+        await show_stickers_of_placeholder(update, context, "CHOOSE", _HOME_AND_BACK_BUTTONS_MARKUP)
+    else:
+        query = update.callback_query
+        await query.answer()
+        await query.edit_message_reply_markup(reply_markup)
 
     save_message_id(update.effective_chat.id, message_id_list, context)
     return CHOOSE_STATE
@@ -470,7 +481,6 @@ async def ask_password_alphabet(update: Update, context: ContextTypes.DEFAULT_TY
     alphabet_spec = get_or_default(context, 'generator_password_alphabet_spec')
 
     if update.callback_query is not None:
-        await erase_last_message(update, context)
         query = update.callback_query.data.split("_")[1]
         if query == "high":
             alphabet_high = not alphabet_high
@@ -506,11 +516,17 @@ async def ask_password_alphabet(update: Update, context: ContextTypes.DEFAULT_TY
         await update.callback_query.answer()
         message = update.callback_query.message
 
-    msg = await message.reply_text(
-        "Выберите символы, участвующие в генерации:",
-        reply_markup=alphabet_checkboxes_markup)
+    if update.callback_query is None:
+        msg = await message.reply_text(
+            "Выберите символы, участвующие в генерации:",
+            reply_markup=alphabet_checkboxes_markup)
+        save_message_id(update.effective_chat.id, [msg.message_id], context)
 
-    save_message_id(update.effective_chat.id, [msg.message_id], context)
+    else:
+        query = update.callback_query
+        await query.answer()
+        await update.callback_query.edit_message_reply_markup(alphabet_checkboxes_markup)
+
     return GENERATE_PASSWORD_ALPHABET_STATE
 
 async def set_generator_password_alphabet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
