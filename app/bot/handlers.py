@@ -1,12 +1,13 @@
 import logging
-import string
-from random import Random
 import random
+import string
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, CopyTextButton, ReplyKeyboardMarkup, \
     KeyboardButton
 from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes, ConversationHandler, MessageHandler, \
     filters
 
+from app.bot.message_collector import collector
 from app.config import SERVICES_PER_PAGE
 from app.db.account import AccountDB
 from app.db.user import UserDB
@@ -77,21 +78,6 @@ _HOME_BUTTON_MARKUP = ReplyKeyboardMarkup.from_row([
     KeyboardButton(HOME_BUTTON_MESSAGE)
 ], resize_keyboard=True)
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if await auth_check(update, context):
-        return await main_menu(update, context)
-
-    message = await update.message.reply_text(
-        "Добро пожаловать! Введите:" +
-        "\n\t /login - для входа" +
-        "\n\t /generate - для начала диалога генерации пароля" +
-        "\n\t /generate <size> - для генерации пароля указанной длинны", reply_markup=_START_MENU_MARKUP)
-
-    message_id_list = [message.message_id]
-    if update.message is not None: message_id_list.append(update.message.id)
-    save_message_id(update.effective_chat.id, message_id_list, context)
-    return UNAUTHED_STATE
-
 def save_message_id(chat_id, message_id_list: list[int], context: ContextTypes.DEFAULT_TYPE) -> None:
     message_archive = context.user_data.get('message_id_archive', [])
     for message_id in message_id_list:
@@ -104,63 +90,16 @@ def save_sensitive_message_id(chat_id, message_id_list: list[int], context: Cont
         message_archive.append([chat_id, message_id])
     context.user_data['sensitive_message_id_archive'] = message_archive
 
-async def login(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    user_id = update.effective_user.id
-    user = await UserDB.get_user(user_id=user_id)
-
-    if user is None:
-        return await sign_up(update, context)
-
-    message = await update.message.reply_text("Введите мастер пароль:")
-    save_message_id(update.effective_chat.id, [message.message_id], context)
-    return PASSWORD_VERIFICATION_STATE
-
-async def sign_up(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    message = await update.message.reply_text(
-        """Данного аккаунта нет в базе денных.
-            Необходимо придумать мастер пароль (не менее 8 символов):""")
-    save_message_id(update.effective_chat.id, [message.message_id], context)
-    return SIGN_UP_STATE
-
-async def set_user_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    message_id_list = []
-    if update.message is not None:
-        save_sensitive_message_id(update.effective_chat.id, [update.message.message_id], context)
-
-    data = update.message.text
-    if len(data) < 8 or data.__contains__(' '):
-        message = await update.message.reply_text("Пароль не может содержать менее 8 символов, пробелы итд.")
-        message_id_list.append(message.message_id)
-        save_message_id(update.effective_chat.id, message_id_list, context)
-        return await sign_up(update, context)
-
-    _hash, salt = get_hash(data.encode())
-    user = User(update.effective_user.id, _hash, salt)
-    await UserDB.add_user(user=user)
-
-    await show_stickers_of_placeholder(update, context, "SUCCESS", placeholder="Пароль успешно сохранен!")
-
-    save_message_id(update.effective_chat.id, message_id_list, context)
-    return await login(update, context)
-
-async def verify_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-
-    if update.message.text is not None:
-        context.user_data['secret'] = update.message.text
-        save_sensitive_message_id(update.effective_chat.id, [update.message.id], context)
-
-    return await is_authorized(update, context)
 
 async def is_authorized(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await erase_sensitive_message(update, context)
     # await erase_last_message(update, context)
 
     if not await auth_check(update, context):
-        await show_stickers_of_placeholder(update,context,"DENIED",placeholder=None)
+        await show_stickers_of_placeholder(update, context, "DENIED", placeholder="Access denied!")
         return await start(update, context)
 
-
-    await show_stickers_of_placeholder(update,context,"APPROVED",placeholder=None)
+    await show_stickers_of_placeholder(update, context, "APPROVED", placeholder=None)
     return await main_menu(update, context)
 
 
@@ -194,6 +133,86 @@ async def erase_message(context, chat_id, message_id):
         logging.error("Cant delete message")
 
 
+##
+
+@collector()
+async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if update.message:
+        logging.info(f'unknown_command: {update.message.text}')
+    else:
+        logging.info('unknown_command: not message type')
+
+    return await is_authorized(update, context)
+
+
+@collector()
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if await auth_check(update, context):
+        return await main_menu(update, context)
+
+    message = await update.message.reply_text(
+        "Добро пожаловать! Введите:" +
+        "\n\t /login - для входа" +
+        "\n\t /generate - для начала диалога генерации пароля" +
+        "\n\t /generate <size> - для генерации пароля указанной длинны", reply_markup=_START_MENU_MARKUP)
+
+    message_id_list = [message.message_id]
+    if update.message is not None: message_id_list.append(update.message.id)
+    save_message_id(update.effective_chat.id, message_id_list, context)
+    return UNAUTHED_STATE
+
+
+@collector()
+async def login(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user_id = update.effective_user.id
+    user = await UserDB.get_user(user_id=user_id)
+
+    if user is None:
+        return await sign_up(update, context)
+
+    message = await update.message.reply_text("Введите мастер пароль:")
+    save_message_id(update.effective_chat.id, [message.message_id], context)
+    return PASSWORD_VERIFICATION_STATE
+
+async def sign_up(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    message = await update.message.reply_text(
+        """Данного аккаунта нет в базе денных.
+            Необходимо придумать мастер пароль (не менее 8 символов):""")
+    save_message_id(update.effective_chat.id, [message.message_id], context)
+    return SIGN_UP_STATE
+
+
+@collector(True)
+async def set_user_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    message_id_list = []
+
+    data = update.message.text
+    if len(data) < 8 or data.__contains__(' '):
+        message = await update.message.reply_text("Пароль не может содержать менее 8 символов, пробелы итд.")
+        message_id_list.append(message.message_id)
+        save_message_id(update.effective_chat.id, message_id_list, context)
+        return await sign_up(update, context)
+
+    _hash, salt = get_hash(data.encode())
+    user = User(update.effective_user.id, _hash, salt)
+    await UserDB.add_user(user=user)
+
+    await show_stickers_of_placeholder(update, context, "SUCCESS", placeholder="Пароль успешно сохранен!")
+
+    save_message_id(update.effective_chat.id, message_id_list, context)
+    return await login(update, context)
+
+
+@collector(True)
+async def verify_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+
+    if update.message.text is not None:
+        context.user_data['secret'] = update.message.text
+
+    return await is_authorized(update, context)
+
+
+@collector()
 async def logout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if context.user_data.get('secret') is not None:
         del (context.user_data['secret'])
@@ -218,10 +237,10 @@ async def auth_check(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool
 
     return user.get_password_hash() == _hash
 
+
+@collector()
 async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     message_id_list = []
-    if update.message is not None:
-        message_id_list.append(update.message.message_id)
 
     if not await auth_check(update, context):
         save_message_id(update.effective_chat.id, message_id_list, context)
@@ -235,9 +254,9 @@ async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     save_message_id(update.effective_chat.id, message_id_list, context)
     return CMD_STATE
 
+
+@collector()
 async def toggle_stickers(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.message is not None:
-        save_message_id(update.effective_chat.id, [update.message.id], context)
 
     if context.user_data.get('is_stickers_active') is None:
         context.user_data['is_stickers_active'] = True
@@ -245,6 +264,7 @@ async def toggle_stickers(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         context.user_data['is_stickers_active'] = not context.user_data['is_stickers_active']
 
 
+@collector()
 async def show_stickers_of_placeholder(update: Update, context: ContextTypes.DEFAULT_TYPE, stickers_type,
                                        reply_markup=None,
                                        placeholder=STANDART_MESSAGE_PLACEHOLDER):
@@ -254,7 +274,6 @@ async def show_stickers_of_placeholder(update: Update, context: ContextTypes.DEF
     else:
         await update.callback_query.answer()
         message = update.callback_query.message
-    message_id_list.append(message.message_id)
 
     is_stickers = context.user_data.get('is_stickers_active')
     if is_stickers is not None and is_stickers:
@@ -269,6 +288,7 @@ async def show_stickers_of_placeholder(update: Update, context: ContextTypes.DEF
 
 
 # add
+@collector()
 async def new_account(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not await auth_check(update, context):
         return UNAUTHED_STATE
@@ -281,8 +301,10 @@ async def new_account(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     save_message_id(update.effective_chat.id, message_id_list, context)
     return INPUT_SERVICE_STATE
 
+
+@collector()
 async def add_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    message_id_list = [update.message.message_id]
+    message_id_list = []
     service_name = update.message.text
     user_id = update.effective_user.id
 
@@ -297,12 +319,14 @@ async def add_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 
     msg = await update.message.reply_text(f'Введи логин для сервиса {service_name}')
     message_id_list.append(msg.message_id)
-    save_message_id(update.effective_chat, message_id_list, context)
+    save_message_id(update.effective_chat.id, message_id_list, context)
 
     return INPUT_LOGIN_STATE
 
+
+@collector()
 async def add_login(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    message_id_list = [update.message.message_id]
+    message_id_list = []
 
     service_login = update.message.text
     context.user_data['login'] = service_login
@@ -315,8 +339,11 @@ async def add_login(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
     message_id_list.append(msg.message_id)
     save_message_id(update.effective_chat, message_id_list, context)
+    save_message_id(update.effective_chat.id, message_id_list, context)
     return INPUT_PASSWORD_STATE
 
+
+@collector()
 async def add_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
     user_id = update.effective_user.id
@@ -336,6 +363,8 @@ async def add_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     save_message_id(update.effective_chat, [msg.message_id], context)
     return DEAD_END
 
+
+@collector()
 async def add_generated_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
     service = context.user_data['service']
@@ -361,18 +390,19 @@ async def add_generated_password(update: Update, context: ContextTypes.DEFAULT_T
 
 
 # list
+@collector()
 async def list_services(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | None:
+    if not await auth_check(update, context):
+        return await start(update, context)
+
     message_id_list = []
 
     if update.message is not None:
         message = update.message
-        message_id_list.append(update.message.message_id)
     else:
         await update.callback_query.answer()
         message = update.callback_query.message
 
-    if not await auth_check(update, context):
-        return await start(update, context)
 
     user_id = update.effective_user.id
 
@@ -415,7 +445,7 @@ async def list_services(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     if update.callback_query is None and page == 0:
         msg = await message.reply_text('Выберите сервис:', reply_markup=reply_markup)
         message_id_list.append(msg.message_id)
-        await show_stickers_of_placeholder(update, context, "CHOOSE", _HOME_AND_BACK_BUTTONS_MARKUP)
+        await show_stickers_of_placeholder(update, context, "CHOOSE", _HOME_BUTTON_MARKUP)
     else:
         query = update.callback_query
         await query.answer()
@@ -425,6 +455,7 @@ async def list_services(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     return CHOOSE_STATE
 
 
+@collector()
 async def send_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     del (context.user_data['page'])
     user_id = update.effective_user.id
@@ -445,27 +476,29 @@ async def send_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 
 
 # generate
-
+@collector()
 async def generation_dialog_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if update.message is not None:
-        save_message_id(update.effective_chat.id, [update.message.message_id], context)
-
     return await ask_password_size(update, context)
 
+
+@collector()
 async def ask_password_size(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     msg = await update.message.reply_text("Введите желаемую длину пароля:", reply_markup=_HOME_AND_BACK_BUTTONS_MARKUP)
 
     save_message_id(update.effective_chat.id, [msg.message_id], context)
     return GENERATE_PASSWORD_SIZE_STATE
 
+
+@collector()
 async def set_generator_password_size(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     size = int(update.message.text)
-    if not size:
+    if not size or size > 256:
+        msg = await update.message.reply_text("Длинна пароля должна быть в пределах от 1 до 256 символов(включительно)")
+        save_message_id(update.effective_chat.id, [msg.message_id], context)
         return await ask_password_size(update, context)
 
     context.user_data['generator_password_size'] = size
 
-    save_message_id(update.effective_chat.id, [update.message.message_id], context)
     return await ask_password_alphabet(update, context)
 
 def get_or_default(context: ContextTypes.DEFAULT_TYPE, name: str, default=True):
@@ -551,6 +584,8 @@ async def ask_password_alphabet_manual(update: Update, context: ContextTypes.DEF
     save_message_id(update.effective_chat.id, [msg.message_id], context)
     return GENERATE_PASSWORD_MANUAL_ALPHABET_STATE
 
+
+@collector()
 async def set_generator_password_alphabet_manual(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     alphabet = update.message.text
 
@@ -560,7 +595,6 @@ async def set_generator_password_alphabet_manual(update: Update, context: Contex
 
     context.user_data['generator_password_alphabet'] = alphabet
 
-    save_message_id(update.effective_chat.id, [update.message.message_id], context)
     return await generate_password(update, context)
 
 async def generate_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -587,10 +621,9 @@ async def generate_password(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 
 # delete
+@collector()
 async def delete_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     message_id_list = []
-    if update.message is not None:
-        message_id_list.append(update.message.message_id)
 
     user_id = update.effective_user.id
 
@@ -598,9 +631,8 @@ async def delete_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         context.user_data['page'] = 0
         services = await AccountDB.get_accounts(user_id=user_id)
         context.user_data['services'] = services[::]
-    else:
 
-        await erase_last_message(update, context)
+    else:
         services = context.user_data['services']
         if update.callback_query.data == 'next_page':
             context.user_data['page'] += 1
@@ -686,10 +718,9 @@ async def cancel_delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 
 
 ##
+@collector()
 async def get_sticker_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message_id_list = []
-    if update.message is not None:
-        message_id_list.append(update.message.message_id)
 
     file_id = update.message.sticker.file_id
     message = f"Sticker's file id: {file_id}"
@@ -708,8 +739,10 @@ conversation_handler = ConversationHandler(
 
             CommandHandler('generate', generation_dialog_start),
             MessageHandler(filters.TEXT & filters.Text([GENERATE_BUTTON_MESSAGE]), generation_dialog_start),
+
         ],
         PASSWORD_VERIFICATION_STATE: [
+
             MessageHandler(filters.TEXT & ~filters.COMMAND, verify_password)
         ],
         SIGN_UP_STATE: [
@@ -789,5 +822,18 @@ conversation_handler = ConversationHandler(
         DEAD_END: [
         ]
     },
-    fallbacks=[]
+    fallbacks=[
+        CommandHandler('home', is_authorized),
+        MessageHandler(filters.TEXT & filters.Text([HOME_BUTTON_MESSAGE]), is_authorized),
+
+        CommandHandler('logout', logout),
+        MessageHandler(filters.TEXT & filters.Text([EXIT_BUTTON_MESSAGE]), logout),
+
+        CommandHandler("toggle_stickers", toggle_stickers),
+
+        MessageHandler(filters.Sticker.ALL, get_sticker_id),
+
+        MessageHandler(filters.ALL, unknown_command)
+
+    ]
 )
