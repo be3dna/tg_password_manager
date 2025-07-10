@@ -195,7 +195,8 @@ async def erase_message(context, chat_id, message_id):
 
 
 async def logout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    del (context.user_data['secret'])
+    if context.user_data.get('secret') is not None:
+        del (context.user_data['secret'])
 
     messages_archive = context.user_data.get('message_id_archive')
     if messages_archive is not None:
@@ -635,10 +636,15 @@ async def delete_service(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.callback_query.answer()
         message = update.callback_query.message
 
-    msg = await message.reply_text('Выберите сервис:', reply_markup=reply_markup)
-    message_id_list.append(msg.message_id)
 
-    await show_stickers_of_placeholder(update, context, "CHOOSE", _HOME_AND_BACK_BUTTONS_MARKUP)
+    if update.callback_query is None and page == 0:
+        msg = await message.reply_text('Выберите сервис:', reply_markup=reply_markup)
+        message_id_list.append(msg.message_id)
+        await show_stickers_of_placeholder(update, context, "CHOOSE", _HOME_AND_BACK_BUTTONS_MARKUP)
+    else:
+        query = update.callback_query
+        await query.answer()
+        await query.edit_message_reply_markup(reply_markup)
 
     save_message_id(update.effective_chat.id, message_id_list, context)
     return CHOOSE_DELETING_STATE
@@ -707,8 +713,6 @@ conversation_handler = ConversationHandler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, verify_password)
         ],
         SIGN_UP_STATE: [
-            CommandHandler('home', is_authorized),
-            MessageHandler(filters.TEXT & filters.Text([HOME_BUTTON_MESSAGE]), is_authorized),
             MessageHandler(filters.TEXT & filters.Text([BACK_BUTTON_MESSAGE]), is_authorized),
 
             MessageHandler(filters.TEXT & ~filters.COMMAND, set_user_password)
@@ -731,62 +735,46 @@ conversation_handler = ConversationHandler(
             MessageHandler(filters.TEXT & filters.Text([EXIT_BUTTON_MESSAGE]), logout)
         ],
         INPUT_SERVICE_STATE: [
-            CommandHandler('home', is_authorized),
-            MessageHandler(filters.TEXT & filters.Text([HOME_BUTTON_MESSAGE]), is_authorized),
             MessageHandler(filters.TEXT & filters.Text([BACK_BUTTON_MESSAGE]), is_authorized),
 
             MessageHandler(filters.TEXT & ~filters.COMMAND, add_service)
         ],
         INPUT_LOGIN_STATE: [
-            CommandHandler('home', is_authorized),
-            MessageHandler(filters.TEXT & filters.Text([HOME_BUTTON_MESSAGE]), is_authorized),
             MessageHandler(filters.TEXT & filters.Text([BACK_BUTTON_MESSAGE]), is_authorized),
 
             MessageHandler(filters.TEXT & ~filters.COMMAND, add_login)
         ],
         INPUT_PASSWORD_STATE: [
-            CommandHandler('home', is_authorized),
-            MessageHandler(filters.TEXT & filters.Text([HOME_BUTTON_MESSAGE]), is_authorized),
             MessageHandler(filters.TEXT & filters.Text([BACK_BUTTON_MESSAGE]), is_authorized),
 
             MessageHandler(filters.TEXT & ~filters.COMMAND, add_password),
             CallbackQueryHandler(pattern='^generate_password$', callback=add_generated_password)
         ],
         CHOOSE_STATE: [
-            CommandHandler('home', is_authorized),
-            MessageHandler(filters.TEXT & filters.Text([HOME_BUTTON_MESSAGE]), is_authorized),
             MessageHandler(filters.TEXT & filters.Text([BACK_BUTTON_MESSAGE]), is_authorized),
 
             CallbackQueryHandler(pattern='^previous_page$|^next_page$', callback=list_services),
             CallbackQueryHandler(pattern='^service_.+$', callback=send_password)
         ],
         CHOOSE_DELETING_STATE: [
-            CommandHandler('home', is_authorized),
-            MessageHandler(filters.TEXT & filters.Text([HOME_BUTTON_MESSAGE]), is_authorized),
             MessageHandler(filters.TEXT & filters.Text([BACK_BUTTON_MESSAGE]), is_authorized),
 
             CallbackQueryHandler(pattern='^previous_page$|^next_page$', callback=delete_service),
             CallbackQueryHandler(pattern='^del_service_.+$', callback=delete_password)
         ],
         CONFIRM_DELETE_STATE: [
-            CommandHandler('home', is_authorized),
-            MessageHandler(filters.TEXT & filters.Text([HOME_BUTTON_MESSAGE]), is_authorized),
             MessageHandler(filters.TEXT & filters.Text([BACK_BUTTON_MESSAGE]), delete_service),
 
             CallbackQueryHandler(pattern='^confirm_delete$', callback=confirm_delete),
             CallbackQueryHandler(pattern='^cancel_delete$', callback=cancel_delete)
         ],
         GENERATE_PASSWORD_SIZE_STATE: [
-            CommandHandler('home', is_authorized),
-            MessageHandler(filters.TEXT & filters.Text([HOME_BUTTON_MESSAGE]), is_authorized),
             MessageHandler(filters.TEXT & filters.Text([BACK_BUTTON_MESSAGE]), is_authorized),
 
             MessageHandler(filters.TEXT & filters.Regex(r"^\d+$"), set_generator_password_size),
             MessageHandler(filters.ALL, ask_password_size)
         ],
         GENERATE_PASSWORD_ALPHABET_STATE: [
-            CommandHandler('home', is_authorized),
-            MessageHandler(filters.TEXT & filters.Text([HOME_BUTTON_MESSAGE]), is_authorized),
             MessageHandler(filters.TEXT & filters.Text([BACK_BUTTON_MESSAGE]), ask_password_size),
 
             CallbackQueryHandler(pattern='^alphabet_approve$', callback=set_generator_password_alphabet),
@@ -794,17 +782,12 @@ conversation_handler = ConversationHandler(
             CallbackQueryHandler(pattern='^toggle_.+$', callback=ask_password_alphabet)
         ],
         GENERATE_PASSWORD_MANUAL_ALPHABET_STATE: [
-            CommandHandler('home', is_authorized),
-            MessageHandler(filters.TEXT & filters.Text([HOME_BUTTON_MESSAGE]), is_authorized),
             MessageHandler(filters.TEXT & filters.Text([BACK_BUTTON_MESSAGE]), ask_password_alphabet),
 
             MessageHandler(filters.TEXT, set_generator_password_alphabet_manual)
         ],
         DEAD_END: [
-            CommandHandler('home', is_authorized),
-            MessageHandler(filters.TEXT & filters.Text([HOME_BUTTON_MESSAGE]), is_authorized)
         ]
     },
-    fallbacks=[],
-    conversation_timeout=5
+    fallbacks=[]
 )
