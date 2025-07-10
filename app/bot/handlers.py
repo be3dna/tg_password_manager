@@ -225,6 +225,22 @@ async def logout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text("Logout success!")
     return await start(update, context)
 
+@collector()
+async def session_timeout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if context.user_data.get('secret') is not None:
+        del (context.user_data['secret'])
+
+    messages_archive = context.user_data.get('message_id_archive')
+    if messages_archive is not None:
+        await erase_last_message(update, context, len(messages_archive))
+    await erase_sensitive_message(update, context)
+
+    await update.message.reply_text("Сессия была завершена из за длительной не активности.")
+
+    return ConversationHandler.END
+
+
+
 async def auth_check(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     if context.user_data.get('secret') is None:
         return False
@@ -338,7 +354,6 @@ async def add_login(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                                     reply_markup=generate_password_kb)
 
     message_id_list.append(msg.message_id)
-    save_message_id(update.effective_chat, message_id_list, context)
     save_message_id(update.effective_chat.id, message_id_list, context)
     return INPUT_PASSWORD_STATE
 
@@ -820,7 +835,8 @@ conversation_handler = ConversationHandler(
             MessageHandler(filters.TEXT, set_generator_password_alphabet_manual)
         ],
         DEAD_END: [
-        ]
+        ],
+        ConversationHandler.TIMEOUT: [MessageHandler(filters.ALL,session_timeout)]
     },
     fallbacks=[
         CommandHandler('home', is_authorized),
@@ -835,5 +851,6 @@ conversation_handler = ConversationHandler(
 
         MessageHandler(filters.ALL, unknown_command)
 
-    ]
+    ],
+    conversation_timeout=300
 )
