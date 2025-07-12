@@ -1,6 +1,7 @@
 import logging
 import random
 import string
+from time import sleep
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, CopyTextButton, ReplyKeyboardMarkup, \
     KeyboardButton
@@ -47,7 +48,7 @@ stickers = {
 ACCOUNT_LIST_BUTTON_MESSAGE = "📋 список аккаунтов"
 ADD_ACCOUNT_BUTTON_MESSAGE = "📥 добавить аккаунт"
 DELETE_ACCOUNT_BUTTON_MESSAGE = "❌ удалить аккаунт"
-SETTINGS_BUTTON_MESSAGE = "🛠 настройки"
+SETTINGS_BUTTON_MESSAGE = "🛠 сменить пароль"
 BACK_BUTTON_MESSAGE = "↪ назад"
 HOME_BUTTON_MESSAGE = "🏠 на главную"
 GENERATE_BUTTON_MESSAGE = "⚙ сгенерировать пароль"
@@ -68,7 +69,7 @@ _START_MENU_MARKUP = ReplyKeyboardMarkup.from_row([
 _MAIN_MENU_MARKUP = ReplyKeyboardMarkup([
     [KeyboardButton(ACCOUNT_LIST_BUTTON_MESSAGE), KeyboardButton(GENERATE_BUTTON_MESSAGE)],
     [KeyboardButton(ADD_ACCOUNT_BUTTON_MESSAGE), KeyboardButton(DELETE_ACCOUNT_BUTTON_MESSAGE)],
-    [KeyboardButton(EXIT_BUTTON_MESSAGE)] # KeyboardButton(SETTINGS_BUTTON_MESSAGE),
+    [KeyboardButton(SETTINGS_BUTTON_MESSAGE), KeyboardButton(EXIT_BUTTON_MESSAGE)]
 ], resize_keyboard=True, one_time_keyboard=True)
 _HOME_AND_BACK_BUTTONS_MARKUP = ReplyKeyboardMarkup.from_row([
     KeyboardButton(BACK_BUTTON_MESSAGE),
@@ -161,6 +162,28 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     save_message_id(update.effective_chat.id, message_id_list, context)
     return UNAUTHED_STATE
 
+@collector()
+async def change_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    message_id_list = []
+    mgs = await update.message.reply_text("Уважаемый!\nФункционал не реализован!")
+    message_id_list.append(mgs.message_id)
+    mgs = await update.message.reply_text("Удаление БД через:")
+    message_id_list.append(mgs.message_id)
+    mgs = await update.message.reply_text("3")
+    message_id_list.append(mgs.message_id)
+    sleep(1)
+    mgs = await update.message.reply_text("2")
+    message_id_list.append(mgs.message_id)
+    sleep(1)
+    mgs = await update.message.reply_text("1")
+    message_id_list.append(mgs.message_id)
+    sleep(1)
+    mgs = await update.message.reply_text("🖕🖕🖕")
+    message_id_list.append(mgs.message_id)
+    sleep(1)
+
+    save_message_id(update.effective_chat.id,message_id_list, context)
+    return await logout(update,context)
 
 @collector()
 async def login(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -596,7 +619,15 @@ async def set_generator_password_alphabet(update: Update, context: ContextTypes.
     return await generate_password(update, context)
 
 async def ask_password_alphabet_manual(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    msg = await update.message.reply_text("Введите строку символов, которые будут использоваться при создании пароля:")
+
+    if update.message is not None:
+        message = update.message
+    else:
+        await update.callback_query.answer()
+        message = update.callback_query.message
+
+
+    msg = await message.reply_text("Введите строку символов, которые будут использоваться при создании пароля:")
 
     save_message_id(update.effective_chat.id, [msg.message_id], context)
     return GENERATE_PASSWORD_MANUAL_ALPHABET_STATE
@@ -780,6 +811,8 @@ conversation_handler = ConversationHandler(
 
             CommandHandler('generate', generation_dialog_start),
             MessageHandler(filters.TEXT & filters.Text([GENERATE_BUTTON_MESSAGE]), generation_dialog_start),
+
+            MessageHandler(filters.TEXT & filters.Text([SETTINGS_BUTTON_MESSAGE]), change_password),
 
             CommandHandler('logout', logout),
             MessageHandler(filters.TEXT & filters.Text([EXIT_BUTTON_MESSAGE]), logout)
